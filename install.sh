@@ -45,6 +45,15 @@ sudo install -Dm644 "${ROOT}/pacman-hooks/99-drive-gekko-gnome.hook" \
   "${HOOK_DIR}/99-drive-gekko-gnome.hook"
 ok "hook puesto en ${HOOK_DIR}"
 
+# Segunda red de seguridad: el hook avisa en el momento, pero solo si estabas
+# mirando la terminal. Esto lo vuelve a comprobar en cada inicio de sesion.
+info "instalando la comprobacion de inicio de sesion"
+install -Dm644 "${ROOT}/systemd/drive-gekko-check.service" \
+  "${HOME}/.config/systemd/user/drive-gekko-check.service"
+systemctl --user daemon-reload
+systemctl --user enable --now drive-gekko-check.service >/dev/null 2>&1 || true
+ok "servicio de usuario activado"
+
 cat <<FIN
 
 ${G}Paquetes instalados.${O} Queda un paso que solo puedes dar tu, en la interfaz:

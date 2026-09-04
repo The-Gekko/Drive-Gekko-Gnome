@@ -97,15 +97,21 @@ Drive desaparece y **Nautilus empieza a dar «Permiso denegado» sin más aviso*
 
 No falla el arranque. No hay error en el log. Simplemente deja de funcionar.
 
-Por eso el repo instala un hook:
+### Cómo te enteras
 
-```
-/etc/pacman.d/hooks/99-drive-gekko-gnome.hook
-  -> /usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh
-```
+Tres redes, de la más inmediata a la más tardía:
 
-que tras cada transacción sobre `gnome-online-accounts` o `gvfs` comprueba si
-el binario instalado sigue pidiendo el permiso. La comprobación de fondo es:
+1. **Hook de pacman** — `/etc/pacman.d/hooks/99-drive-gekko-gnome.hook`, que
+   ejecuta `/usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh`. Salta al
+   terminar cualquier transacción sobre `gnome-online-accounts` o `gvfs`.
+   Escribe en la terminal **y lanza una notificación de escritorio**, porque la
+   salida de un hook se pierde entre las 200 líneas de un `-Syu` grande.
+2. **Servicio de inicio de sesión** — `drive-gekko-check.service` (unidad de
+   usuario). Repite la comprobación en cada arranque, por si la actualización
+   ocurrió desde una TTY o con el escritorio caído.
+3. **A mano** — `./scripts/check-updates.sh`, cuando quieras.
+
+Los tres ejecutan el mismo script. La comprobación de fondo es:
 
 ```bash
 strings /usr/lib/libgoa-backend-1.0.so | grep googleapis.com/auth/drive

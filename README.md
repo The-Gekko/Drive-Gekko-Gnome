@@ -113,16 +113,28 @@ paquete oficial de Arch**, y eso tiene consecuencias — ver abajo.
 | GNOME borra la opción `google` de gvfs | `./scripts/check-updates.sh` lo avisa | Fin del camino: quedarte en la versión actual o migrar a rclone |
 
 El caso peligroso es el primero, porque **no da ningún error**: Drive
-simplemente deja de montar. Por eso `install.sh` deja este hook puesto:
+simplemente deja de montar. Por eso `install.sh` deja dos avisos puestos:
 
-```
-/etc/pacman.d/hooks/99-drive-gekko-gnome.hook
+| Dónde | Cuándo salta |
+| --- | --- |
+| `/etc/pacman.d/hooks/99-drive-gekko-gnome.hook` | Justo al terminar cualquier `pacman` que toque `gnome-online-accounts` o `gvfs`. Escribe en la terminal **y lanza una notificación de escritorio** |
+| `~/.config/systemd/user/drive-gekko-check.service` | En cada inicio de sesión, por si la actualización pasó cuando no estabas mirando |
+
+Los dos ejecutan la misma comprobación, que no compara versiones sino que mira
+si el binario instalado sigue pidiendo el permiso:
+
+```bash
+strings /usr/lib/libgoa-backend-1.0.so | grep googleapis.com/auth/drive
 ```
 
-Comprueba, después de cada actualización que toque `gnome-online-accounts` o
-`gvfs`, si el binario instalado sigue pidiendo el permiso de Drive. No arregla
-nada solo — construir paquetes no se hace dentro de una transacción de pacman —
-pero hace imposible no enterarse.
+No arreglan nada solos — construir paquetes no se hace dentro de una
+transacción de pacman — pero hacen imposible no enterarse.
+
+También puedes preguntarlo tú en cualquier momento:
+
+```bash
+./scripts/check-updates.sh
+```
 
 > [!NOTE]
 > **¿Y no se puede fijar para que no se quite nunca?** Se puede (`IgnorePkg`, o
@@ -181,7 +193,8 @@ Drive-Gekko-Gnome/
 │   ├── gvfs-google/               # gvfsd-google: solo los 2 ficheros que faltan
 │   ├── gnome-online-accounts/     # GOA con -D google_files=true
 │   └── deja-dup/                  # opcional: sigue en [extra], aquí como referencia
-├── pacman-hooks/                  # el aviso post-actualización
+├── pacman-hooks/                  # aviso post-actualización (terminal + notificación)
+├── systemd/                       # comprobación en cada inicio de sesión
 ├── scripts/
 ├── docs/
 │   ├── estado-upstream.md         # el porqué, y la comparación con rclone

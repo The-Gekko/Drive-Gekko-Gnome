@@ -11,6 +11,38 @@ set -uo pipefail
 R=$'\033[1;31m'; Y=$'\033[1;33m'; G=$'\033[1;32m'; O=$'\033[0m'
 ROTO=0
 
+# ---------------------------------------------------------------------------
+# Aviso en el escritorio.
+#
+# La salida de un hook de pacman se pierde entre las 200 lineas de un -Syu
+# grande. Una notificacion no. Funciona en los dos contextos donde corre este
+# script: como root desde el hook, y como usuario desde el servicio de login.
+# ---------------------------------------------------------------------------
+notificar() {
+  local titulo="$1" cuerpo="$2"
+  command -v notify-send >/dev/null 2>&1 || return 0
+
+  if [[ $EUID -ne 0 ]]; then
+    notify-send -u critical -i drive-harddisk -a "Drive-Gekko-Gnome" \
+      "$titulo" "$cuerpo" 2>/dev/null || true
+    return 0
+  fi
+
+  # Como root: hay que entrar en la sesion grafica de cada usuario. Se detectan
+  # por su bus de sesion en /run/user/<uid>/bus, sin depender de parsear
+  # la salida de loginctl.
+  local d uid nombre
+  for d in /run/user/*/; do
+    [[ -S "${d}bus" ]] || continue
+    uid="$(basename "$d")"
+    nombre="$(id -nu "$uid" 2>/dev/null)" || continue
+    runuser -u "$nombre" -- env \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=${d}bus" \
+      notify-send -u critical -i drive-harddisk -a "Drive-Gekko-Gnome" \
+      "$titulo" "$cuerpo" 2>/dev/null || true
+  done
+}
+
 # Si el usuario no tiene gvfs-google, esto no le incumbe.
 pacman -Qq gvfs-google >/dev/null 2>&1 || exit 0
 
@@ -35,6 +67,8 @@ if ! grep -q 'googleapis.com/auth/drive' <<<"$_scopes"; then
   printf '  Para arreglarlo:%s\n' "${Y}"
   printf '    cd <repo>/packages/gnome-online-accounts && makepkg -si\n'
   printf '%s\n' "${O}"
+  notificar "Google Drive ha dejado de funcionar" \
+    "Arch ha reinstalado gnome-online-accounts y se perdio el permiso de Drive. Reconstruye el paquete del repo Drive-Gekko-Gnome."
   ROTO=1
 fi
 
@@ -54,6 +88,8 @@ if [[ -n "$_pin" && -n "$_gvfs" && "$_pin" != "$_gvfs" ]]; then
   printf '    pin del paquete: %s\n\n' "$_pin"
   printf '  Reconstruye gvfs-google con pkgver=%s antes de usar Drive.\n' "$_gvfs"
   printf '\n'
+  notificar "Google Drive necesita reconstruirse" \
+    "gvfs paso a la version ${_gvfs} y gvfs-google esta fijado a ${_pin}. Reconstruyelo antes de usar Drive."
   ROTO=1
 fi
 

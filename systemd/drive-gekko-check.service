@@ -1,0 +1,26 @@
+# Drive-Gekko-Gnome — comprobacion al iniciar sesion
+#
+# El hook de pacman avisa en el momento de la actualizacion, pero eso solo
+# sirve si estabas mirando. Este servicio vuelve a comprobarlo en cada inicio
+# de sesion, asi que como muy tarde te enteras al siguiente arranque.
+#
+# Es un servicio de USUARIO, no del sistema: necesita tu bus de sesion para
+# poder lanzar la notificacion.
+#
+# Instalar en: ~/.config/systemd/user/drive-gekko-check.service
+#   systemctl --user enable --now drive-gekko-check.service
+
+[Unit]
+Description=Drive-Gekko-Gnome: comprobar que Google Drive sigue accesible
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+# Margen para que el demonio de notificaciones este levantado. Sin esto, en un
+# arranque frio la notificacion se pierde porque aun no hay nadie escuchando.
+ExecStartPre=/usr/bin/sleep 20
+ExecStart=/usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh
+
+[Install]
+WantedBy=default.target
