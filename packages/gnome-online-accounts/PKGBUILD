@@ -1,0 +1,125 @@
+# Maintainer: The-Gekko <thegekko5426@gmail.com>
+# Contributor: Drive-Gekko-Gnome
+# Basado en el PKGBUILD oficial de Arch (heftig, fabiscafe)
+#
+# ############################################################################
+# POR QUE ESTE PAQUETE EXISTE AQUI
+#
+# Sin esto, gvfs-google NO SIRVE PARA NADA. Es la pieza que falta.
+#
+# GNOME Online Accounts pide a Google una lista de permisos (scopes) OAuth al
+# dar de alta la cuenta. Desde febrero de 2026 upstream metio la parte de
+# Drive detras de una opcion de compilacion, apagada por defecto:
+#
+#   option('google_files', type: 'boolean', value: false,
+#          description: 'Enable Google provider Files feature')
+#
+#   commit: "build: Disable google provider Files feature" (2026-02-19)
+#
+# Arch compila con el valor por defecto. Resultado: el goa-daemon de [extra] NO
+# pide https://www.googleapis.com/auth/drive, la cuenta nunca expone la interfaz
+# org.gnome.OnlineAccounts.Files, y gvfsd-google recibe "Permiso denegado"
+# aunque este perfectamente instalado.
+#
+# Solus compila con -Dgoogle_files=true. Por eso alli Drive funciona.
+#
+# QUE HACE ESTE PAQUETE: el mismo tarball oficial, la misma version que Arch,
+# con esa unica opcion activada. Solo reemplaza `gnome-online-accounts`;
+# `libgoa` y `libgoa-docs` siguen siendo los oficiales de [extra].
+#
+# CONSECUENCIA IMPORTANTE: esto SI sombrea un paquete del sistema. Cada vez que
+# Arch actualice gnome-online-accounts, pacman instalara el suyo y Drive dejara
+# de montar SIN AVISAR (no falla el arranque, solo desaparece el permiso).
+# `scripts/check-updates.sh` detecta esa situacion comprobando si el binario
+# instalado pide el scope de Drive. Ver docs/mantenimiento.md.
+# ############################################################################
+
+pkgname=gnome-online-accounts
+pkgver=3.58.1
+pkgrel=1
+pkgdesc='Single sign-on framework for GNOME (compilado con -D google_files=true)'
+arch=('x86_64')
+url='https://gitlab.gnome.org/GNOME/gnome-online-accounts'
+license=('LGPL-2.0-or-later')
+depends=(
+  "libgoa=${pkgver}"   # el oficial de [extra]; este paquete NO lo reemplaza
+  'dbus'
+  'dconf'
+  'gcr-4'
+  'glib2'
+  'glibc'
+  'gtk4'
+  'hicolor-icon-theme'
+  'json-glib'
+  'keyutils'
+  'krb5'
+  'libadwaita'
+  'libgcc'
+  'librest'
+  'libsecret'
+  'libsoup3'
+  'libxml2'
+)
+makedepends=(
+  'git'
+  'glib2-devel'
+  'gobject-introspection'
+  'meson'
+  'ninja'
+  'vala'
+)
+optdepends=(
+  'gvfs-google: montar Google Drive en Nautilus (el motivo de este paquete)'
+  'gvfs-goa: sistemas de ficheros virtuales, p.ej. OwnCloud'
+  'gvfs-onedrive: Microsoft OneDrive'
+)
+provides=('libgoa-backend-1.0.so')
+options=('!emptydirs')
+
+# Los tags de GOA usan firmas SSH que makepkg no entiende; se verifica por b2sum
+# del checkout, igual que hace Arch.
+source=("git+https://gitlab.gnome.org/GNOME/${pkgname}.git#tag=${pkgver}")
+b2sums=('602f36235a44052e0a0b7feea7574f659144bb70f4f97b50c6d020927b6d153290cc0396d38265d20f36a2c2d8f920817c187ef6584279623935c3c9ed74ea8e')
+
+build() {
+  # La UNICA diferencia con Arch es -D google_files=true.
+  # documentation=false evita gi-docgen, que aqui no aporta nada.
+  arch-meson "${pkgname}" build \
+    -D google_files=true \
+    -D documentation=false \
+    -D man=true
+
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "${pkgdir}"
+
+  cd "${pkgdir}"
+
+  # Comprobacion ruidosa a proposito: si el binario no acabo pidiendo el scope
+  # de Drive, este paquete no sirve y es mejor que el build pare aqui que
+  # descubrirlo despues con un "Permiso denegado" sin explicacion.
+  # El scope vive en libgoa-backend (goabackend/goagoogleprovider.c), no en el
+  # daemon. Se busca con glob para que sobreviva a cambios de soname.
+  if ! find usr/lib -name 'libgoa-backend-1.0.so*' -type f -exec strings {} + 2>/dev/null \
+       | grep -q 'googleapis.com/auth/drive'; then
+    echo "ERROR: goa-daemon no pide el scope de Drive." >&2
+    echo "       revisa si la opcion google_files sigue existiendo en GOA ${pkgver}" >&2
+    return 1
+  fi
+
+  # Ficheros que pertenecen a los paquetes libgoa/libgoa-docs de [extra]:
+  # se eliminan para no entrar en conflicto con ellos.
+  rm -rf usr/include/goa-1.0/goa
+  rm -f  usr/lib/libgoa-1.0.so*
+  rm -f  usr/lib/girepository-1.0/Goa-1.0.typelib
+  rm -rf usr/lib/goa-1.0/include
+  rm -f  usr/lib/pkgconfig/goa-1.0.pc
+  rm -f  usr/share/gir-1.0/Goa-1.0.gir
+  rm -f  usr/share/vala/vapi/goa-1.0.*
+  rm -rf usr/share/doc
+
+  install -Dm644 "${srcdir}/${pkgname}/COPYING" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/COPYING"
+}

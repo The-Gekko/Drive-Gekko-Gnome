@@ -1,0 +1,94 @@
+# Maintainer: The-Gekko <thegekko5426@gmail.com>
+# Contributor: Drive-Gekko-Gnome
+#
+# ############################################################################
+# PAQUETE OPCIONAL — NO hace falta mantenerlo
+#
+# deja-dup 50.1 SIGUE en [extra], mantenido por Arch (Balló György) y con
+# restic ya activado. Instala el oficial:  pacman -S deja-dup
+#
+# Esta receta se conserva solo por dos motivos:
+#   1) documentar la traduccion del package.yml de Solus (docs/solus-vs-arch.md)
+#   2) tener el fallback listo si algun dia Arch tambien lo deja caer
+#
+# build-all.sh NO lo construye por defecto: usa --with-optional.
+# ############################################################################
+#
+# Origen de la receta: packages/d/deja-dup/package.yml (Solus) -> PKGBUILD (Arch)
+# Upstream: https://gitlab.gnome.org/World/deja-dup
+#
+# Diferencia intencionada con Solus: Solus mueve /etc/xdg a /usr/share/xdg
+# porque su filosofia es "stateless". En Arch /etc/xdg es la ruta correcta,
+# asi que ese `mv` NO se replica.
+
+pkgname=deja-dup
+pkgver=50.1
+pkgrel=1
+pkgdesc='Herramienta de copias de seguridad para GNOME (frontend de duplicity/restic)'
+arch=('x86_64')
+url='https://apps.gnome.org/DejaDup/'
+license=('GPL-3.0-or-later')
+depends=(
+  'bash'
+  'dconf'
+  'duplicity'
+  'fuse3'
+  'glib2'
+  'glibc'
+  'gtk4'
+  'gvfs'
+  'hicolor-icon-theme'
+  'json-glib'
+  'libadwaita'
+  'libsecret'
+  'libsoup3'
+  'pango'
+  'restic'
+)
+makedepends=(
+  'appstream'
+  'blueprint-compiler'
+  'desktop-file-utils'
+  'itstool'
+  'meson'
+  'ninja'
+  'vala'
+)
+checkdepends=('xdg-user-dirs')
+optdepends=(
+  'gvfs-google: destino de copia en Google Drive vía GNOME Online Accounts'
+  'gvfs-onedrive: destino de copia en Microsoft OneDrive'
+  'rclone: destinos remotos adicionales (Drive, OneDrive, S3...)'
+)
+options=('!emptydirs')
+# Tarball generado por GitLab. Ojo: los archivos autogenerados de GitLab NO
+# siempre son byte-a-byte reproducibles entre regeneraciones. Si el checksum
+# falla al bumpear version, regenera con `updpkgsums` y anota el cambio.
+source=("${pkgname}-${pkgver}.tar.gz::https://gitlab.gnome.org/World/${pkgname}/-/archive/${pkgver}/${pkgname}-${pkgver}.tar.gz")
+sha256sums=('997c506c0630b67148a334bf22b9f398bedaf085c32c4c3d5d7f1b3a84d19152')
+
+build() {
+  # Equivalente al `setup:` de Solus: %meson_configure -Denable_restic=true
+  meson setup "${pkgname}-${pkgver}" build \
+    --prefix=/usr \
+    --libexecdir=/usr/lib \
+    --sbindir=/usr/bin \
+    --sysconfdir=/etc \
+    --buildtype=release \
+    --wrap-mode=nodownload \
+    -D b_lto=true \
+    -D b_pie=true \
+    -D enable_restic=true
+
+  meson compile -C build
+}
+
+check() {
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  meson install -C build --destdir "${pkgdir}"
+  install -Dm644 "${pkgname}-${pkgver}/COPYING" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/COPYING"
+}

@@ -1,0 +1,26 @@
+# Drive-Gekko-Gnome — aviso post-actualizacion
+#
+# gnome-online-accounts de este repo SOMBREA al paquete oficial de Arch (es el
+# mismo, solo que compilado con -D google_files=true). Cuando Arch publica una
+# version nueva, pacman instala la suya y el permiso de Google Drive desaparece
+# sin ningun error visible: Nautilus simplemente empieza a decir
+# "Permiso denegado".
+#
+# Este hook no arregla nada por su cuenta -- construir paquetes no se hace
+# dentro de una transaccion de pacman. Lo que hace es que sea imposible no
+# enterarse.
+#
+# Instalar en: /etc/pacman.d/hooks/99-drive-gekko-gnome.hook
+# El script va en: /usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = gnome-online-accounts
+Target = gvfs
+
+[Action]
+Description = Drive-Gekko-Gnome: comprobando el acceso a Google Drive...
+When = PostTransaction
+Exec = /usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh

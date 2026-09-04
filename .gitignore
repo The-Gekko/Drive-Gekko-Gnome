@@ -1,0 +1,29 @@
+# Artefactos de makepkg
+src/
+pkg/
+*.pkg.tar.*
+*.src.tar.*
+*.log
+
+# Tarballs descargados
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+*.tar.zst
+
+# Repo local generado por build-all.sh --repo
+out/
+
+# Directorios de build de meson
+build/
+
+# Editor / SO
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Clones bare que makepkg deja al usar fuentes git+
+packages/libsoup2/libsoup/
+packages/gnome-online-accounts/gnome-online-accounts/

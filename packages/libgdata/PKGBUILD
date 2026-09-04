@@ -1,0 +1,78 @@
+# Maintainer: The-Gekko <thegekko5426@gmail.com>
+# Contributor: Drive-Gekko-Gnome
+#
+# ############################################################################
+# POR QUE ESTE PAQUETE EXISTE AQUI
+#
+# - Upstream ARCHIVADO: https://gitlab.gnome.org/Archive/libgdata
+#   Sin mantenedor desde hace ~4 anos. GNOME lo archivo oficialmente.
+# - RETIRADO de los repos oficiales de Arch (mayo 2026).
+# - La version del AUR fue una de las comprometidas en el incidente
+#   "Atomic Arch" (11-12 junio 2026). NO usar el AUR ni repos que lo
+#   reconstruyan automaticamente para este paquete.
+#
+# Aqui se construye desde el tarball oficial de download.gnome.org con
+# checksum fijado, que es la unica cadena de confianza que queda.
+#
+# El unico motivo para instalarlo es gvfsd-google (Google Drive en Nautilus).
+# Si no necesitas eso, no instales esto. Ver docs/estado-upstream.md.
+# ############################################################################
+
+pkgname=libgdata
+pkgver=0.18.1
+pkgrel=1
+pkgdesc='Libreria GLib para el protocolo GData de Google (archivada upstream)'
+arch=('x86_64')
+url='https://gitlab.gnome.org/Archive/libgdata'
+license=('LGPL-2.1-or-later')
+depends=(
+  'gcr'              # provee gcr-base-3
+  'glib2'
+  'glibc'
+  'json-glib'
+  'libgoa'           # goa-1.0
+  'libsoup-2.4.so'   # lo provee el paquete libsoup2 de este mismo repo
+  'libxml2'
+)
+makedepends=(
+  'gobject-introspection'
+  'gtk-doc'
+  'gtk3'
+  'meson'
+  'ninja'
+  'vala'
+)
+provides=('libgdata.so')
+options=('!emptydirs')
+source=("https://download.gnome.org/sources/${pkgname}/${pkgver%.*}/${pkgname}-${pkgver}.tar.xz")
+# Checksum tomado del package.yml de Solus y usado como contraste cruzado.
+# Verificalo igualmente contra el .sha256sum publicado por GNOME:
+#   https://download.gnome.org/sources/libgdata/0.18/libgdata-0.18.1.sha256sum
+sha256sums=('dd8592eeb6512ad0a8cf5c8be8c72e76f74bfe6b23e4dd93f0756ee0716804c7')
+
+build() {
+  # Equivalente al `setup:` de Solus:
+  #   %meson_configure -Dalways_build_tests=false -Doauth1=enabled
+  #
+  # oauth1 queda en `disabled`: requiere liboauth (muerto y fuera de Arch) y no
+  # hace falta para GOA -> Google Drive, que usa OAuth2.
+  meson setup "${pkgname}-${pkgver}" build \
+    --prefix=/usr \
+    --libexecdir=/usr/lib \
+    --sbindir=/usr/bin \
+    --buildtype=release \
+    --wrap-mode=nodownload \
+    -D b_lto=true \
+    -D b_pie=true \
+    -D always_build_tests=false \
+    -D gtk_doc=false \
+    -D oauth1=disabled
+
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "${pkgdir}"
+  install -Dm644 "${pkgname}-${pkgver}/COPYING" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/COPYING"
+}

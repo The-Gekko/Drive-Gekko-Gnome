@@ -1,0 +1,116 @@
+# Maintainer: The-Gekko <thegekko5426@gmail.com>
+# Contributor: Drive-Gekko-Gnome
+#
+# ############################################################################
+# POR QUE ESTE PAQUETE EXISTE AQUI
+#
+# Arch ELIMINO el backend de Google Drive. El paquete `gvfs` de [extra] hoy
+# lleva `Replaces/Conflicts: gvfs-google<=1.58.3-1` y ya no instala
+# /usr/lib/gvfsd-google. Upstream (GNOME/gvfs MR !266) desactivo la opcion
+# `google` y recomienda a las distros dejarla apagada, porque depende de
+# libgdata (archivada, atada a libsoup 2.4).
+#
+# ESTRATEGIA: no reemplazamos `gvfs`. Arch lo mantiene bien y no queremos
+# sombrear un paquete del sistema. Compilamos el MISMO tarball oficial con
+# `-D google=true` y empaquetamos SOLO los dos ficheros que faltan:
+#
+#   /usr/lib/gvfsd-google
+#   /usr/share/gvfs/mounts/google.mount
+#
+# CONSECUENCIA IMPORTANTE: gvfsd-google enlaza contra la libgvfscommon.so que
+# instala el `gvfs` del sistema, y esa libreria NO tiene version en el soname.
+# Por eso `depends` fija gvfs a la MISMA pkgver. Cada vez que Arch suba gvfs,
+# hay que subir pkgver aqui y reconstruir, o el backend dejara de arrancar.
+# Ver docs/mantenimiento.md.
+# ############################################################################
+
+pkgname=gvfs-google
+_pkgbase=gvfs
+pkgver=1.60.2
+pkgrel=1
+pkgdesc='gvfs: backend de Google Drive (gvfsd-google), retirado de los repos de Arch'
+arch=('x86_64')
+url='https://gitlab.gnome.org/GNOME/gvfs'
+license=('LGPL-2.0-or-later')
+depends=(
+  "gvfs=${pkgver}"       # pin estricto: libgvfscommon.so no tiene soname versionado
+  "gvfs-goa=${pkgver}"   # el monitor de volumenes de GOA, sigue en [extra]
+  'glib2'
+  'glibc'
+  'libgdata'             # del paquete libgdata de este repo
+  'libgoa'
+)
+optdepends=(
+  'gnome-control-center: anadir la cuenta de Google desde la interfaz de GOA'
+  'nautilus: navegar la unidad montada'
+)
+options=('!emptydirs')
+source=("https://download.gnome.org/sources/${_pkgbase}/${pkgver%.*}/${_pkgbase}-${pkgver}.tar.xz")
+# Contrastado con el package.yml de gvfs en el monorepo de Solus. Verificalo
+# tambien contra https://download.gnome.org/sources/gvfs/1.60/gvfs-1.60.2.sha256sum
+sha256sums=('a8d7744615a488a559302fe0cc8f418d5b44aba3c2ba2163e5a9e6f607c1be9a')
+
+build() {
+  # Se apaga TODO lo que ya provee el gvfs oficial: el build es mucho mas
+  # rapido y no arrastra samba, libmtp, libimobiledevice, etc.
+  #
+  # Las opciones usadas aqui estan verificadas contra la documentacion de BLFS
+  # para gvfs 1.60 y el package.yml de Solus. Antes de anadir otras, confirma
+  # que existen en esta version: meson configure build
+  meson setup "${_pkgbase}-${pkgver}" build \
+    --prefix=/usr \
+    --libexecdir=/usr/lib \
+    --sbindir=/usr/bin \
+    --sysconfdir=/etc \
+    --buildtype=release \
+    --wrap-mode=nodownload \
+    -D b_lto=true \
+    -D b_pie=true \
+    -D privileged_group=wheel \
+    -D google=true \
+    -D goa=true \
+    -D onedrive=false \
+    -D smb=false \
+    -D mtp=false \
+    -D afc=false \
+    -D gphoto2=false \
+    -D nfs=false \
+    -D dnssd=false \
+    -D bluray=false \
+    -D cdda=false \
+    -D fuse=false \
+    -D systemduserunitdir=no \
+    -D tmpfilesdir=no
+
+  meson compile -C build
+}
+
+package() {
+  local _stage="${srcdir}/stage"
+  rm -rf "${_stage}"
+  meson install -C build --destdir "${_stage}"
+
+  # Solo estos dos ficheros salen del build; el resto lo aporta el gvfs oficial.
+  local _wanted=(
+    'usr/lib/gvfsd-google'
+    'usr/share/gvfs/mounts/google.mount'
+  )
+
+  local f
+  for f in "${_wanted[@]}"; do
+    if [[ ! -e "${_stage}/${f}" ]]; then
+      # Fallo ruidoso a proposito: si upstream renombra o elimina el backend,
+      # es preferible que el build pare a publicar un paquete vacio.
+      echo "ERROR: el build no genero ${f}" >&2
+      echo "       revisa si la opcion -D google sigue existiendo en gvfs ${pkgver}" >&2
+      return 1
+    fi
+    install -Dm644 "${_stage}/${f}" "${pkgdir}/${f}"
+  done
+
+  # el daemon tiene que ser ejecutable
+  chmod 755 "${pkgdir}/usr/lib/gvfsd-google"
+
+  install -Dm644 "${_pkgbase}-${pkgver}/COPYING" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/COPYING"
+}

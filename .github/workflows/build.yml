@@ -1,0 +1,87 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'scripts/**'
+      - 'pacman-hooks/**'
+      - 'install.sh'
+      - '.github/workflows/build.yml'
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'scripts/**'
+      - 'pacman-hooks/**'
+      - 'install.sh'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Actualizar sistema
+        run: pacman -Syu --noconfirm namcap git
+
+      - uses: actions/checkout@v4
+
+      - name: bash -n + namcap
+        run: ./scripts/lint.sh
+
+      - name: sintaxis de los scripts
+        run: |
+          for f in install.sh scripts/*.sh pacman-hooks/*.sh; do
+            echo "==> $f"
+            bash -n "$f"
+          done
+
+  chain:
+    name: construir la cadena completa
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Actualizar sistema
+        run: |
+          pacman -Syu --noconfirm git meson ninja vala namcap \
+            glib2-devel gobject-introspection gtk-doc
+
+      - uses: actions/checkout@v4
+
+      # makepkg se niega a correr como root: hace falta un usuario sin privilegios.
+      - name: Preparar usuario de build
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      # El orden NO es decorativo: libgdata necesita las cabeceras de libsoup2
+      # ya instaladas, y gvfs-google las de libgdata. Por eso se construye e
+      # instala uno a uno, en un solo job, en vez de una matriz en paralelo.
+      - name: libsoup2 -> libgdata -> gvfs-google -> gnome-online-accounts
+        run: |
+          set -e
+          for pkg in libsoup2 libgdata gvfs-google gnome-online-accounts; do
+            echo "::group::$pkg"
+            ( cd "packages/$pkg" \
+              && sudo -u builder makepkg --syncdeps --noconfirm --cleanbuild --nocheck --install )
+            echo "::endgroup::"
+          done
+
+      # Las dos comprobaciones que de verdad dicen si esto sirve.
+      - name: verificar el resultado
+        run: |
+          echo "== gvfsd-google enlaza contra el gvfs del sistema =="
+          ldd /usr/lib/gvfsd-google
+          ! ldd /usr/lib/gvfsd-google | grep -q 'not found'
+
+          echo "== GOA pide el permiso de Drive =="
+          strings /usr/lib/libgoa-backend-1.0.so | grep 'googleapis.com/auth/drive'
+
+      - name: namcap sobre los paquetes construidos
+        run: namcap packages/*/*.pkg.tar.zst || true

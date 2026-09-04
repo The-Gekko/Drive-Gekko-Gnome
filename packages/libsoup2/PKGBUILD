@@ -1,0 +1,115 @@
+# Maintainer: The-Gekko <thegekko5426@gmail.com>
+# Contributor: Drive-Gekko-Gnome
+#
+# ############################################################################
+# POR QUE ESTE PAQUETE EXISTE AQUI
+#
+# libsoup 2.4 fue RETIRADO de los repos oficiales de Arch (mayo 2026), porque
+# la serie 2.x no tiene soporte upstream. Sigue haciendo falta porque libgdata
+# no compila sin ella, y libgdata es lo unico que da acceso a Google Drive.
+#
+# DE DONDE SALE EL CODIGO Y LOS PARCHES
+#
+# Se clona el repositorio oficial de GNOME en el tag 2.74.3 y ENCIMA se aplican
+# los 17 commits posteriores de la rama de mantenimiento, tal y como hace el
+# paquete `libsoup` de Arch (mantenido por heftig). Esos commits corrigen
+# vulnerabilidades reales, entre otras:
+#
+#   Fix heap buffer overflow in soup_content_sniffer_sniff
+#   Fix heap buffer overflow in soup-content-sniffer.c:sniff_feed_or_html()
+#   headers: Strictly don't allow NUL bytes
+#   headers: Be more robust against invalid input when parsing params
+#   sniffer: Fix potential overflow
+#
+#   https://gitlab.archlinux.org/archlinux/packaging/packages/libsoup/-/issues/1
+#
+# El tarball pelado de 2.74.3 NO los lleva. Compilar el tarball a secas (que es
+# lo que hace, por ejemplo, Solus) deja esos fallos dentro.
+#
+# ADVERTENCIA QUE SIGUE EN PIE: aunque este parcheado, libsoup 2.x no recibe
+# releases upstream. Estos arreglos existen porque Arch los va recogiendo de la
+# rama; el dia que dejen de hacerlo, nadie mas lo hara. Alternativa sin esta
+# deuda: rclone (ver docs/estado-upstream.md).
+# ############################################################################
+
+pkgname=libsoup2
+_pkgname=libsoup
+pkgver=2.74.3
+pkgrel=2
+pkgdesc='Libreria HTTP cliente/servidor de GNOME (serie 2.4, con parches de CVE de la rama de mantenimiento)'
+arch=('x86_64')
+url='https://libsoup.gnome.org/'
+license=('LGPL-2.0-or-later')
+depends=(
+  'brotli'
+  'glib-networking'
+  'glib2'
+  'glibc'
+  'krb5'
+  'libpsl'
+  'libsysprof-capture'
+  'libxml2'
+  'sqlite'
+  'zlib'
+)
+makedepends=(
+  'git'                    # el cherry-pick de los CVEs lo necesita
+  'glib2-devel'
+  'gobject-introspection'
+  'meson'
+  'ninja'
+  'vala'
+)
+provides=(
+  "libsoup=${pkgver}"
+  'libsoup-2.4.so'
+  'libsoup-gnome-2.4.so'
+)
+conflicts=('libsoup')
+options=('!emptydirs')
+
+# Ultimo commit de la rama de mantenimiento que recoge Arch. Para actualizar:
+# comparar contra el PKGBUILD de https://aur.archlinux.org/libsoup.git
+_cvecommit=5739a090529209c2afc13f482256573bcd9ce940
+
+source=("git+https://gitlab.gnome.org/GNOME/${_pkgname}.git#tag=${pkgver}")
+# b2sum del checkout del tag, el mismo valor que verifica Arch.
+b2sums=('9f2a278482af7ab851aa08b69f59bdd9de8187cac8cb2ac0d904ff087155afaadab253842d7c48fd8e162b3cba742565226e3ec390e671dc7921075fc089949d')
+
+prepare() {
+  cd "${_pkgname}"
+
+  # Los CVEs. `-n` deja los cambios en el arbol sin crear commits, que es lo
+  # que queremos: no estamos manteniendo una rama, solo construyendo.
+  git cherry-pick -n "${pkgver}..${_cvecommit}"
+
+  # Cuantos commits han entrado, para que quede en el log del build.
+  echo "==> aplicados $(git rev-list --count ${pkgver}..${_cvecommit}) commits de la rama de mantenimiento"
+}
+
+build() {
+  # Opciones minimas a proposito:
+  #   tls_check=false  evita que meson falle comprobando el backend TLS
+  #   tests=false      evita arrastrar apache/php como checkdepends
+  #   gtk_doc=false    la documentacion no aporta nada en un paquete binario
+  # Para ver todas las opciones de esta version: meson configure build
+  meson setup "${_pkgname}" build \
+    --prefix=/usr \
+    --libexecdir=/usr/lib \
+    --sbindir=/usr/bin \
+    --buildtype=release \
+    --wrap-mode=nodownload \
+    -D b_lto=true \
+    -D b_pie=true \
+    -D tls_check=false \
+    -D tests=false \
+    -D gtk_doc=false
+
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "${pkgdir}"
+  install -Dm644 "${_pkgname}/COPYING" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/COPYING"
+}
