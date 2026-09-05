@@ -21,8 +21,17 @@
 #
 # El usuario y la ruta del clon se leen de /etc/drive-gekko-gnome.conf
 # (lo escribe install.sh) o de --user/--repo.
+#
+# CREDENCIAL para el `git pull` del repo privado: el temporizador corre sin
+# sesion grafica, asi que el llavero de GNOME (donde `gh auth login` guarda el
+# token) no esta disponible. Dos opciones, en este orden:
+#   1. /etc/drive-gekko-gnome.token (root, 600) con un token de GitHub de solo
+#      lectura (fine-grained, "Contents: Read" sobre este repo). Recomendado.
+#   2. una credencial de git del usuario que funcione sin sesion
+#      (p.ej. `gh auth login --insecure-storage && gh auth setup-git`).
 
 set -euo pipefail
+export LC_ALL=C   # los mensajes de git/pacman se comparan en ingles
 
 CONF=/etc/drive-gekko-gnome.conf
 REPO=""; USER_=""; FORCE=0; PULL=1; DRY=0
@@ -42,6 +51,21 @@ done
 [[ -d "$REPO/packages" ]] || { echo "no parece el repo: $REPO" >&2; exit 1; }
 if (( ! DRY )) && [[ $EUID -ne 0 ]]; then echo "ejecutalo con sudo (lo hace el temporizador), o con --dry-run" >&2; exit 1; fi
 
+# La copia instalada en /usr/local/lib puede quedarse vieja: si el clon tiene
+# una version distinta de este script, se ejecuta la del clon (lo que el bot
+# mantiene es el clon).
+if [[ -f "$REPO/scripts/local-repo.sh" && "$(readlink -f "$0")" != "$(readlink -f "$REPO/scripts/local-repo.sh")" ]] \
+   && ! cmp -s "$0" "$REPO/scripts/local-repo.sh"; then
+  args=(--repo "$REPO" --user "$USER_"); (( FORCE )) && args+=(--force); (( PULL )) || args+=(--no-pull); (( DRY )) && args+=(--dry-run)
+  exec bash "$REPO/scripts/local-repo.sh" "${args[@]}"
+fi
+
+# Una sola ejecucion a la vez (temporizador + manual + install.sh).
+if (( ! DRY )); then
+  exec 9>/run/lock/drive-gekko-repo.lock
+  flock -n 9 || { echo "ya hay una ejecucion de local-repo.sh en curso" >&2; exit 0; }
+fi
+
 ORDER=(libsoup2 libgdata gvfs-google gnome-online-accounts)
 INSTALL_NOW=(libsoup2 libgdata)          # no existen en [extra]: instalarlos no pisa nada
 REPO_ONLY=(gvfs-google gnome-online-accounts)  # pinean gvfs/libgoa: los instala el -Syu del usuario
@@ -49,8 +73,8 @@ OUT="$REPO/out"; REPO_NAME=drive-gekko-gnome; STAMP="$OUT/.built-from"
 
 log()  { printf '[drive-gekko] %s\n' "$*"; }
 # Ningun fallo en silencio: con set -e, un error sin mensaje seria invisible
-# en el journal.
-trap 'log "abortado en la linea $LINENO (ultimo comando: $BASH_COMMAND)"' ERR
+# en el journal. Y que se entere el usuario, no solo el journal.
+trap 'log "abortado en la linea $LINENO (ultimo comando: $BASH_COMMAND)"; notificar "Drive-Gekko-Gnome: fallo al actualizar" "local-repo.sh abortado (journalctl -u drive-gekko-repo)"' ERR
 die()  { log "ERROR: $*"; notificar "Drive-Gekko-Gnome: fallo al actualizar" "$*"; exit 1; }
 as_user() { if [[ $EUID -eq 0 ]]; then runuser -u "$USER_" -- "$@"; else "$@"; fi; }
 run() { if (( DRY )); then log "(dry-run) $*"; else "$@"; fi; }
@@ -65,9 +89,16 @@ notificar() {
 # 1. pull ---------------------------------------------------------------------
 if (( PULL )); then
   log "git pull como $USER_ en $REPO"
-  if ! out="$(as_user env GIT_TERMINAL_PROMPT=0 git -C "$REPO" pull --ff-only 2>&1)"; then
-    if grep -qE 'could not read Username|Authentication failed|terminal prompts disabled' <<<"$out"; then
-      die "git no tiene credencial para el repo privado. Una vez, como $USER_:  gh auth login && gh auth setup-git"
+  gitcred=()
+  if [[ -r /etc/drive-gekko-gnome.token ]]; then
+    # token de solo lectura, inyectado como helper de credenciales solo para
+    # este comando (no queda en ningun .gitconfig)
+    tok="$(tr -d '[:space:]' < /etc/drive-gekko-gnome.token)"
+    gitcred=(-c credential.helper= -c "credential.helper=!f(){ printf 'username=x-access-token\npassword=%s\n' '$tok'; }; f")
+  fi
+  if ! out="$(as_user env GIT_TERMINAL_PROMPT=0 LC_ALL=C git "${gitcred[@]}" -C "$REPO" pull --ff-only 2>&1)"; then
+    if grep -qE 'could not read Username|Authentication failed|terminal prompts disabled|Repository not found' <<<"$out"; then
+      die "git no tiene credencial para el repo privado. Guarda un token de solo lectura en /etc/drive-gekko-gnome.token (ver README)"
     fi
     die "git pull fallo: $(tail -1 <<<"$out")"
   fi
@@ -93,7 +124,7 @@ for p in "${ORDER[@]}"; do
     srcinfo "$p" | awk -F' = ' '/^\tmakedepends = /{print $2}' | sed -E 's/[<>=].*//' \
     | grep -v '\.so' | grep -vxE 'gvfs|gvfs-goa|libgoa|gnome-online-accounts|libsoup2|libgdata|gvfs-google' || true)
 done
-mapfile -t deps < <(printf '%s\n' "${deps[@]}" | sort -u)
+mapfile -t deps < <(printf '%s\n' "${deps[@]}" | grep -v '^$' | sort -u || true)
 if (( ${#deps[@]} )); then
   log "makedepends: ${deps[*]}"
   run pacman -S --needed --noconfirm "${deps[@]}"
@@ -111,6 +142,10 @@ for p in "${ORDER[@]}"; do
     || die "no se pudo construir $p (mira el journal: journalctl -u drive-gekko-repo)"
   mapfile -t files < <(cd "$REPO/packages/$p" && as_user makepkg --packagelist | grep -v -- '-debug-')
   (( ${#files[@]} )) || die "$p: makepkg no genero paquete"
+  # Fuera las versiones anteriores de ESTE paquete en out/: si quedaran dos,
+  # repo-add podria quedarse con la vieja (ordena por nombre, no por version:
+  # 1.60.10 va antes que 1.60.9) y borrar la nueva.
+  as_user find "$OUT" -maxdepth 1 -regextype posix-extended -regex ".*/${p}-[^-]+-[^-]+-[^-]+\.pkg\.tar\.zst" -delete
   for f in "${files[@]}"; do as_user cp -f "$f" "$OUT/"; built+=("$OUT/$(basename "$f")"); done
   if printf '%s\n' "${INSTALL_NOW[@]}" | grep -qx "$p"; then
     log "instalando $p (no existe en [extra]; hace falta para construir el siguiente)"

@@ -30,3 +30,4 @@ packages/gnome-online-accounts/gnome-online-accounts/
 
 # Informe temporal del sincronizador
 sync-report.md
+sync-state.env

@@ -58,8 +58,10 @@ jobs:
             bash -n "$f"
           done
 
-      - name: la unidad systemd es valida
-        run: systemd-analyze verify --user systemd/drive-gekko-check.service || true
+      - name: las unidades systemd son validas
+        run: |
+          systemd-analyze verify --user systemd/drive-gekko-check.service || true
+          systemd-analyze verify systemd/drive-gekko-repo.service systemd/drive-gekko-repo.timer 2>&1 | grep -v 'not executable' || true
 
   chain:
     name: construir la cadena completa
@@ -71,7 +73,7 @@ jobs:
       - name: git para el checkout
         run: |
           pacman -Sy --noconfirm archlinux-keyring
-          pacman -Sy --noconfirm git
+          pacman -Syu --noconfirm git
 
       - uses: actions/checkout@v7
 

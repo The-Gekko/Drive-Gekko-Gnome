@@ -96,12 +96,17 @@ de estado-upstream.md).
 
 ## Regla nº 4: `gnome-online-accounts` sombrea un paquete oficial
 
-Es el único paquete del repo que **sustituye** a uno de `[extra]`. Lleva la
-misma `pkgver-pkgrel` que el de Arch, así que `pacman -Syu` no lo toca... hasta
-que Arch publique una versión nueva. Entonces instala la suya, el permiso de
-Drive desaparece y **Nautilus empieza a dar «Permiso denegado» sin más aviso**.
+Es el único paquete del repo que **sustituye** a uno de `[extra]`. Lleva el
+`pkgver` de Arch y `pkgrel` = el de Arch + `.1`, y el repositorio local va
+**antes** de `[extra]`: así `pacman -Syu` prefiere siempre el nuestro. Cuando
+Arch publica una versión nueva, nuestro paquete (pineado a `libgoa=<vieja>`)
+hace que `pacman -Syu` **se plante** hasta que el bot y el temporizador
+hayan construido el nuevo. Ruidoso a propósito.
 
-No falla el arranque. No hay error en el log. Simplemente deja de funcionar.
+El caso silencioso existe solo si alguien pone el repositorio **después** de
+`[extra]` o instala el GOA de Arch a mano: entonces pacman instala el oficial,
+el permiso de Drive desaparece y Nautilus da «Permiso denegado» sin más aviso.
+Para eso están el hook y la comprobación de inicio de sesión.
 
 ### Cómo te enteras
 
@@ -117,7 +122,8 @@ Tres redes, de la más inmediata a la más tardía:
    ocurrió desde una TTY o con el escritorio caído.
 3. **A mano** — `./scripts/check-updates.sh`, cuando quieras.
 
-Los tres ejecutan el mismo script. La comprobación de fondo es:
+El hook y el servicio de login ejecutan `post-upgrade-check.sh`; `check-updates.sh`
+hace la misma comprobación del scope por su cuenta. La comprobación de fondo es:
 
 ```bash
 strings /usr/lib/libgoa-backend-1.0.so | grep googleapis.com/auth/drive
@@ -178,7 +184,7 @@ Reglas:
 - Mismo `pkgver` pero cambia el PKGBUILD (flags, deps, parches) → `pkgrel+1`.
 - Nunca uses `epoch` salvo que upstream retroceda el número de versión.
 
-## Construcción limpia (recomendado antes de publicar)
+## Construcción limpia (recomendado antes de un cambio grande)
 
 `makepkg` usa tu sistema como entorno de build, así que puede "funcionar aquí"
 por dependencias que tienes instaladas y no están declaradas. El chroot lo
@@ -195,7 +201,7 @@ chroot limpio no tiene `libsoup2` ni `libgdata`. Para esos dos hay que pasarle
 los paquetes ya construidos con `-I`:
 
 ```bash
-extra-x86_64-build -- -I ../libsoup2/libsoup2-*.pkg.tar.zst
+extra-x86_64-build -- -I ../../out/libsoup2-*.pkg.tar.zst   # los .pkg quedan en out/
 ```
 
 ## Checklist por paquete
@@ -221,37 +227,16 @@ sudo ./scripts/local-repo.sh          # git pull + construir si cambió algo + r
 sudo pacman -Syu                      # instala lo que haya nuevo
 ```
 
-Solo generar la `.db` a partir de lo que ya hay en `out/` y comprobarla:
+Solo generar la `.db` a partir de lo que ya hay en `out/` y comprobarla (lista
+blanca de 4, pacman la lee, y la versión de cada uno coincide con su PKGBUILD):
 
 ```bash
 ./scripts/publish-repo.sh --check
 ```
 
-Genera `out/gekko.db.tar.zst`:
-
-```ini
-[gekko]
-SigLevel = Optional TrustAll
-Server = file:///ruta/a/Drive-Gekko-Gnome/out
-```
-
-**El orden importa.** `libsoup2`, `libgdata` y `gvfs-google` no existen en
-`[extra]`, pero `gnome-online-accounts` sí. pacman elige el **primer**
-repositorio de `pacman.conf` que tenga un paquete con ese nombre, sin mirar
-versiones. Si `[gekko]` va después de `[extra]`, `pacman -Syu` instalará
-siempre el GOA de Arch — el que no pide el permiso de Drive — y no dirá nada.
-Ponlo **antes** de `[core]` y `[extra]`.
-
-Para firmar (recomendado si lo sirves por HTTP, y más aún tratándose de
-paquetes sin upstream):
-
-```bash
-gpg --full-gen-key                       # una sola vez
-cd out && for p in *.pkg.tar.zst; do gpg --detach-sign --use-agent "$p"; done
-repo-add --sign --key <TU_KEYID> gekko.db.tar.zst ./*.pkg.tar.zst
-```
-
-y cambia `SigLevel` a `Required DatabaseOptional`.
+El bloque de `/etc/pacman.conf` lo escribe `sudo scripts/add-repo.sh --local
+<repo>/out` (antes de `[core]`, y lo recoloca si estaba mal). No se firma: el
+repositorio lo lee root desde un directorio de tu propia máquina.
 
 ## Riesgos conocidos
 

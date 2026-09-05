@@ -67,9 +67,17 @@ temporizador haya construido, en la misma transacción que el `gvfs` o `libgoa`
 nuevo de Arch.
 
 > [!IMPORTANT]
-> **Una vez, para que el temporizador pueda hacer `git pull` de un repo
-> privado:** `gh auth login && gh auth setup-git` (con tu usuario). Sin eso el
-> temporizador avisa de que no tiene credencial, y las recetas nuevas no llegan.
+> El repo es privado: el `git clone` ya te pedirá tu credencial de GitHub. Para
+> que el **temporizador** pueda hacer `git pull` sin sesión abierta (el llavero
+> de GNOME no está disponible), guarda un token de **solo lectura** (fine-grained,
+> *Contents: Read* sobre este repo) en `/etc/drive-gekko-gnome.token`:
+>
+> ```bash
+> sudo install -m 600 /dev/stdin /etc/drive-gekko-gnome.token <<< 'github_pat_...'
+> ```
+>
+> Sin eso el temporizador avisa de que no tiene credencial, y las recetas nuevas
+> no llegan.
 
 <details>
 <summary>Solo el bloque de pacman.conf, a mano</summary>
@@ -189,10 +197,10 @@ versiones de Solus), qué pasa en cada caso y qué puede fallar:
 | --- | --- | --- |
 | Arch actualiza `gvfs` o `gnome-online-accounts` y tu repositorio local aún no tiene la receta nueva construida | `pacman -Syu` **se planta** con un conflicto de dependencias (el pin funcionando, a propósito) | `sudo systemctl start drive-gekko-repo.service` (trae y construye) y repetir `pacman -Syu`. Si el bot aún no subió la receta: esperar (≤ 8 h) o *Actions → sync-upstream → Run workflow* |
 | Alguien pone el repo después de `[extra]`, o instala el GOA de Arch a mano | El hook de pacman lo grita al terminar la transacción y llega una notificación | `sudo scripts/add-repo.sh --local <repo>/out` lo recoloca; `sudo pacman -Syu` |
-| El temporizador no puede hacer `git pull` | Notificación: «git no tiene credencial» | `gh auth login && gh auth setup-git` una vez |
+| El temporizador no puede hacer `git pull` | Notificación: «git no tiene credencial» | Token de solo lectura en `/etc/drive-gekko-gnome.token` (ver Instalación) |
 | GNOME borra la opción `google` de gvfs | El bot abre un issue; `./scripts/check-updates.sh` lo avisa | Fin del camino: quedarte en la versión actual o migrar a rclone |
 
-El caso peligroso es el primero, porque **no da ningún error**: Drive
+El caso peligroso es el segundo, porque **no da ningún error**: Drive
 simplemente deja de montar. Por eso `install.sh` deja dos avisos puestos:
 
 | Dónde | Cuándo salta |
@@ -287,7 +295,7 @@ Drive-Gekko-Gnome/
 ├── pacman-hooks/                  # aviso post-actualización (terminal + notificación)
 ├── systemd/                       # temporizador de reconstrucción + comprobación de login
 ├── .github/workflows/
-│   ├── build.yml                  # con cada push/PR: lint y cadena entera en un Arch limpio
+│   ├── build.yml                  # push a main y PRs (si tocan paquetes/scripts): lint y cadena entera
 │   └── sync-upstream.yml          # cada 8 h: ¿hay que actualizar algo? auto / PR / issue
 ├── upstream/solus/                # canario: el setup: de Solus la última vez que se miró
 ├── CREDITS.md                     # quién hizo qué: Solus, Arch, GNOME

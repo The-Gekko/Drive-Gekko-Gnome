@@ -3,7 +3,6 @@
 #
 #   ./scripts/build-all.sh                    # solo construir la cadena obligatoria
 #   ./scripts/build-all.sh --install          # construir e instalar con pacman
-#   ./scripts/build-all.sh --repo gekko       # construir y generar repo local "gekko"
 #   ./scripts/build-all.sh --with-optional    # incluir deja-dup (ya esta en [extra])
 #   ./scripts/build-all.sh --only libgdata    # construir un paquete concreto
 #   ./scripts/build-all.sh --clean            # borrar src/ pkg/ antes de construir
@@ -29,7 +28,6 @@ OPTIONAL=(deja-dup)
 DO_INSTALL=0
 DO_CLEAN=0
 WITH_OPTIONAL=0
-REPO_NAME=""
 ONLY=""
 
 C_OK=$'\033[1;32m'; C_INFO=$'\033[1;36m'; C_WARN=$'\033[1;33m'
@@ -45,7 +43,6 @@ while [[ $# -gt 0 ]]; do
     --install)       DO_INSTALL=1; shift ;;
     --clean)         DO_CLEAN=1; shift ;;
     --with-optional) WITH_OPTIONAL=1; shift ;;
-    --repo)          REPO_NAME="${2:?--repo necesita un nombre}"; shift 2 ;;
     --only)          ONLY="${2:?--only necesita un paquete}"; shift 2 ;;
     -h|--help)       sed -n '2,12p' "$0"; exit 0 ;;
     *)               die "opcion desconocida: $1" ;;
@@ -102,27 +99,6 @@ for pkg in "${ORDER[@]}"; do
   popd >/dev/null
 done
 
-if [[ -n "$REPO_NAME" ]]; then
-  info "generando repo local '${REPO_NAME}' en ${OUT_DIR}"
-  # Sin --new: con el, repo-add no actualiza la entrada si se reconstruye un
-  # paquete con la misma version (p.ej. cambiar depends sin subir pkgrel).
-  ( cd "$OUT_DIR" && repo-add --remove "${REPO_NAME}.db.tar.zst" ./*.pkg.tar.zst )
-  # pacman rechaza URLs con espacios: se codifican.
-  _url="file://${OUT_DIR// /%20}"
-  cat <<EOFMSG
-
-Repo listo. Anade esto a /etc/pacman.conf, y OJO AL ORDEN: tiene que ir ANTES
-de [core] y [extra]. gnome-online-accounts existe en [extra], y pacman elige el
-primer repositorio que tenga el nombre, sin mirar versiones; si [${REPO_NAME}]
-va despues, pacman instalara siempre el GOA de Arch, que no pide el permiso de
-Drive, y no dara ningun error.
-
-[${REPO_NAME}]
-SigLevel = Optional TrustAll
-Server = ${_url}
-
-Luego: sudo pacman -Syu
-EOFMSG
-fi
-
+# El repositorio de pacman (out/<nombre>.db) lo genera scripts/publish-repo.sh:
+# lista blanca de 4 paquetes y prueba de que pacman lo lee.
 ok "listo"

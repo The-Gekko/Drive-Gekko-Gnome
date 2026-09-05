@@ -83,15 +83,16 @@ run en rojo.
 
 ## Lo que te toca a ti
 
-1. **Una vez**, en GitHub → *Settings → Actions → General*: *Workflow
-   permissions* en **Read and write**, y marcar **Allow GitHub Actions to
-   create and approve pull requests**. Sin eso el bot falla con 403.
-2. **Una vez, en cada máquina**: `gh auth login && gh auth setup-git`, para que
-   el temporizador pueda hacer `git pull` del repo privado.
+1. **Una vez**, en GitHub → *Settings → Actions → General*: marcar **Allow
+   GitHub Actions to create and approve pull requests**. Sin eso, abrir el PR
+   falla con 403 (el resto de permisos los declara el propio workflow).
+2. **Una vez, en cada máquina**: un token de GitHub de solo lectura en
+   `/etc/drive-gekko-gnome.token` (ver README), para que el temporizador pueda
+   hacer `git pull` del repo privado sin sesión abierta.
 3. **Cuando llegue un PR** (cada varios meses): abrir el run enlazado y ver
    que está en verde, comprobar que el diff toca solo lo anunciado. Si quieres
-   probarlo antes: `gh pr checkout <n>` y `sudo systemctl start
-   drive-gekko-repo.service`. Merge.
+   probarlo antes: `gh pr checkout <n>`, `sudo systemctl start
+   drive-gekko-repo.service`, y al terminar `git checkout main`. Merge.
 4. **Cuando llegue un issue**: leerlo. El bot lo cierra solo si en un run
    posterior el problema ya no está.
 5. **Antes de hacer push desde tu IDE**: `git pull`, porque el bot también
@@ -104,7 +105,7 @@ run en rojo.
 | Situación | Qué ves | Qué hacer |
 | --- | --- | --- |
 | Arch sube gvfs/GOA y el bot aún no ha corrido (≤ 8 h) o el temporizador no ha construido (≤ 6 h) | `pacman -Syu` se planta: *«instalar gvfs (X) rompe la dependencia gvfs=Y requerida por gvfs-google»* | `sudo systemctl start drive-gekko-repo.service`; si la receta aún no está en git, *Actions → sync-upstream → Run workflow* |
-| El temporizador no tiene credencial de git | Notificación «git no tiene credencial» y `journalctl -u drive-gekko-repo` | `gh auth login && gh auth setup-git` |
+| El temporizador no tiene credencial de git | Notificación «git no tiene credencial» y `journalctl -u drive-gekko-repo` | Token de solo lectura en `/etc/drive-gekko-gnome.token` |
 | GitHub Actions caído o sin minutos (repo privado: cuota mensual) | Nada nuevo en `main` | `./scripts/sync-upstream.sh --apply` en tu máquina, revisar el diff, commit, y `sudo systemctl start drive-gekko-repo.service` |
 | Alguien pone el repo después de `[extra]` | Hook y notificación | `sudo scripts/add-repo.sh --local <repo>/out` |
 | GNOME borra la opción `google` de gvfs | Issue: *«fin del camino»* | Quedarse en la versión actual o migrar a rclone ([estado-upstream.md](estado-upstream.md)) |

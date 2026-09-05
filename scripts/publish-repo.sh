@@ -42,7 +42,8 @@ for p in "${pkgs[@]}"; do
 done
 
 info "generando la base de datos ${REPO_NAME}"
-repo-add --remove "${REPO_NAME}.db.tar.zst" "${pkgs[@]}" >/dev/null
+# --prevent-downgrade: si en out/ hubiera dos versiones, la vieja no pisa a la nueva.
+repo-add --remove --prevent-downgrade "${REPO_NAME}.db.tar.zst" "${pkgs[@]}" >/dev/null
 # repo-add deja .db y .files como symlinks; se copian como ficheros reales.
 for f in db files; do rm -f "${REPO_NAME}.${f}"; cp -L "${REPO_NAME}.${f}.tar.zst" "${REPO_NAME}.${f}"; done
 ok "${REPO_NAME}.db con ${#pkgs[@]} paquete(s)"; printf '     %s\n' "${pkgs[@]}"
@@ -77,6 +78,11 @@ for n in "${ALLOWED[@]}"; do
   [[ -n "$url" ]] || die "$n no esta en la .db (¿fallo su build?)"
   f="${url#file://}"; f="${f//%20/ }"
   [[ -f "$f" ]] || die "$n: la .db apunta a $(basename "$f") pero no existe en out/"
-  ok "$n -> $(basename "$f")"
+  # y la version de la .db tiene que ser la del PKGBUILD actual: una .db con
+  # una version vieja dejaria al sistema pineado a un gvfs/libgoa que ya no existe
+  want="$( (cd "$ROOT/packages/$n" && makepkg --printsrcinfo 2>/dev/null) | awk -F' = ' '/^\tpkgver/{v=$2} /^\tpkgrel/{r=$2} END{print v"-"r}')"
+  have="$(bsdtar -xOf "${REPO_NAME}.db" "$n-*/desc" 2>/dev/null | awk '/^%VERSION%/{getline; print; exit}')"
+  [[ -z "$want" || "$have" == "$want" ]] || die "$n: la .db tiene $have pero el PKGBUILD dice $want (¿quedo una version vieja en out/?)"
+  ok "$n -> $(basename "$f")$( [[ -n "$want" ]] && echo " ($want)" )"
 done
 echo "repositorio local verificado"

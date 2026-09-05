@@ -19,7 +19,8 @@
 # maquina los construye. El bot de GitHub Actions mantiene las RECETAS; el
 # temporizador de esta maquina las trae y las construye.
 #
-# NO ejecutar como root: makepkg lo rechaza. Pide sudo una vez al principio.
+# NO ejecutar como root: makepkg lo rechaza. Pide sudo al principio (y quiza
+# otra vez despues de compilar, si tarda mas que el timeout de sudo).
 
 set -euo pipefail
 
@@ -54,7 +55,7 @@ if pacman -Qq 2>/dev/null | grep -qx libsoup; then
         sudo pacman -Rns libsoup"
 fi
 
-info "pidiendo sudo (una sola vez)"
+info "pidiendo sudo"
 sudo -v || die "sin sudo no se puede instalar nada"
 
 # ---------------------------------------------------------------------------
@@ -102,7 +103,8 @@ info "instalando gvfs-google y gnome-online-accounts desde el repositorio local"
 sudo pacman -Syu gvfs-google gnome-online-accounts \
   || die "pacman no pudo instalar. Si habla de 'gvfs=X' es que Arch acaba de subir gvfs y la
       receta aun no la ha seguido el bot: espera al siguiente run (cada 8 h) o
-      lanzalo en GitHub (Actions -> sync-upstream -> Run workflow) y repite ./install.sh"
+      lanzalo en GitHub (Actions -> sync-upstream -> Run workflow); luego
+      'git pull' en este clon y repite ./install.sh"
 
 info "verificando"
 "${ROOT}/scripts/verify-chain.sh" || die "la cadena instalada no verifica; mira los mensajes de arriba"
@@ -133,8 +135,10 @@ ${G}Instalado y verificado.${O} Queda un paso que solo puedes dar tu, en la inte
 
 Despues, tu unidad sale en la barra lateral de Nautilus:  ls /run/user/\$(id -u)/gvfs/
 
-${Y}Para que el temporizador pueda traer recetas nuevas del repo privado, git
-necesita una credencial tuya (una sola vez):${O}  gh auth login && gh auth setup-git
+${Y}Para que el temporizador pueda traer recetas nuevas del repo privado sin
+sesion abierta, guarda un token de GitHub de SOLO LECTURA (fine-grained,
+"Contents: Read" sobre este repo) en /etc/drive-gekko-gnome.token:${O}
+  sudo install -m 600 /dev/stdin /etc/drive-gekko-gnome.token <<< 'github_pat_...'
 Sin eso, el temporizador te avisara de que no puede hacer git pull.
 
 FIN

@@ -8,7 +8,9 @@ la última vez que el sincronizador lo miró.
 (lo es GNOME, y para las versiones de gvfs y GOA lo es Arch). Lo único que se
 toma de Solus son dos decisiones de compilación — `-Dgoogle=true` en gvfs y
 `-Dgoogle_files=true` en gnome-online-accounts — y estos ficheros existen para
-enterarse si Solus las cambia. Cuando `scripts/sync-upstream.sh` ve una
+enterarse si Solus las cambia. Se vigila el `setup:` entero de los cinco
+paquetes (gvfs, gnome-online-accounts, libgdata, libsoup, deja-dup): cualquier
+cambio ahí es un aviso, y una persona decide si importa. Cuando `scripts/sync-upstream.sh` ve una
 diferencia, abre un issue con el antes y el después y guarda el snapshot nuevo
 en `main` (en un commit propio, o dentro del PR si hay uno), para que una
 persona decida si el cambio nos afecta. **No bloquea** los bumps rutinarios de
