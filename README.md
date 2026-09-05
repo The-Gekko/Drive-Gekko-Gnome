@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/gekko-shell.png" alt="Gekko Shell Banner" width="320" style="border-radius: 14px; box-shadow: 0px 10px 30px rgba(0,0,0,0.5);" />
+<img src="assets/gekko-drive.jpg" alt="Gekko's Drive — GNOME Integration" width="320" style="border-radius: 14px; box-shadow: 0px 10px 30px rgba(0,0,0,0.5);" /> 
 
 <sub><i>(Imagen generada con Gemini — modelo Nano Banana)</i></sub>
 
