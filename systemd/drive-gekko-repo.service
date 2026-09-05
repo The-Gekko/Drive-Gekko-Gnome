@@ -1,0 +1,12 @@
+# Unidad de SISTEMA (root): construye como el usuario, instala como root.
+# Instalar en /etc/systemd/system/ junto con drive-gekko-repo.timer.
+[Unit]
+Description=Drive-Gekko-Gnome: construir la cadena si cambio en git
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/drive-gekko-gnome/local-repo.sh
+Nice=10
+IOSchedulingClass=idle

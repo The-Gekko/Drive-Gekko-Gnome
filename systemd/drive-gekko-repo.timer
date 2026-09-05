@@ -1,0 +1,11 @@
+[Unit]
+Description=Drive-Gekko-Gnome: comprobar cada 6 h si hay recetas nuevas que construir
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

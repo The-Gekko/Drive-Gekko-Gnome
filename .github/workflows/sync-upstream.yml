@@ -1,25 +1,30 @@
 name: sync-upstream
 
-# El vigilante. Cada 4 horas mira si Arch movio gvfs o gnome-online-accounts,
+# El vigilante. Cada 8 horas mira si Arch movio gvfs o gnome-online-accounts,
 # si GNOME publico un 2.74.x nuevo de libsoup, si Arch amplio sus parches, y si
 # Solus cambio los flags que nos importan. La logica esta en
 # scripts/sync-upstream.sh; aqui solo se decide que hacer con su resultado:
 #
-#   exit 0  -> nada. Cierra issues del bot que ya no apliquen. Keepalive.
-#   exit 11 -> cambios rutinarios: construye, verifica, hace push a main y
-#              PUBLICA en el mismo run (un push del bot no dispara build.yml).
+#   exit 0  -> nada que cambiar. Si hay avisos, issue. Cierra los que ya no apliquen.
+#   exit 11 -> cambios rutinarios: construye y verifica la cadena en un Arch
+#              limpio y hace push a main. Las maquinas lo recogen con su
+#              temporizador (drive-gekko-repo.timer): el repo es privado, los
+#              binarios no se publican en GitHub.
 #   exit 10 -> cambios que necesitan una persona: construye y verifica para
-#              demostrar que funciona, y abre un PR. No publica.
-#   exit 20 -> algo raro: abre un issue (sin duplicar) y no toca nada.
+#              demostrar que funciona, y abre un PR.
+#   exit 20 -> fallo interno: descarta lo editado, issue, run en rojo.
 #
 # Configuracion unica en GitHub (Settings -> Actions -> General):
 #   - Workflow permissions: "Read and write permissions"
 #   - marcar "Allow GitHub Actions to create and approve pull requests"
 # Sin eso, el push y el PR fallan con 403 en el primer run.
+#
+# Minutos de Actions (repo privado, cuota mensual): un run sin cambios son
+# unos 3 minutos; con build, 15-20. Cada 8 h son ~90 runs al mes.
 
 on:
   schedule:
-    - cron: '17 */4 * * *'   # minuto 17 para esquivar la congestion de las horas en punto
+    - cron: '17 */8 * * *'
   workflow_dispatch:
 
 permissions:
@@ -27,9 +32,8 @@ permissions:
   pull-requests: write
   issues: write
 
-# Mismo grupo que build.yml: nunca dos publicaciones a la vez.
 concurrency:
-  group: publicar
+  group: sync-upstream
   cancel-in-progress: false
 
 jobs:
@@ -41,15 +45,19 @@ jobs:
       image: archlinux:base-devel
     env:
       GH_TOKEN: ${{ github.token }}
-      REPO_GPG_KEY: ${{ secrets.REPO_GPG_KEY }}
     steps:
       - name: git para el checkout
-        run: pacman -Sy --noconfirm git
+        run: |
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Sy --noconfirm git
 
       - uses: actions/checkout@v7
 
       - name: preparar el contenedor
         run: ./scripts/ci-prepare.sh
+
+      - name: etiqueta del bot
+        run: gh label create sync-bot --description "abierto por el sincronizador" --color 0E8A16 2>/dev/null || true
 
       - name: sincronizar
         id: sync
@@ -58,30 +66,26 @@ jobs:
           code=0
           sudo -u builder env HOME=/home/builder ./scripts/sync-upstream.sh --apply || code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "== resultado: $code =="
-          cat sync-report.md
+          if [[ -f sync-state.env ]]; then cat sync-state.env >> "$GITHUB_OUTPUT"; else echo "WARNINGS=0" >> "$GITHUB_OUTPUT"; fi
+          echo "== resultado: $code =="; cat sync-report.md 2>/dev/null || true
 
-      # ---------------------------------------------------------------
-      # exit 20: hace falta una persona -> issue (sin duplicar)
-      # ---------------------------------------------------------------
-      - name: abrir issue (hace falta una persona)
-        if: steps.sync.outputs.code == '20'
+      # Cualquier cosa que no sea 0/10/11 es un fallo del propio bot: descartar
+      # lo que haya editado, avisar y dejar el run en rojo.
+      - name: fallo interno del sincronizador
+        if: steps.sync.outputs.code != '0' && steps.sync.outputs.code != '10' && steps.sync.outputs.code != '11'
         shell: bash
         run: |
-          title="sync: hace falta una persona"
-          if gh issue list --label sync-bot --state open --search "in:title \"$title\"" --json number --jq '.[0].number' | grep -q .; then
-            n="$(gh issue list --label sync-bot --state open --search "in:title \"$title\"" --json number --jq '.[0].number')"
-            gh issue comment "$n" --body-file sync-report.md
-            echo "issue #$n actualizado"
-          else
-            gh label create sync-bot --description "abierto por el sincronizador" --color 0E8A16 2>/dev/null || true
-            gh issue create --title "$title" --label sync-bot --body-file sync-report.md
-          fi
+          git checkout -- packages upstream 2>/dev/null || true
+          title="sync: fallo interno del sincronizador (codigo ${{ steps.sync.outputs.code }})"
+          { echo "El sincronizador termino con el codigo ${{ steps.sync.outputs.code }}. No se ha tocado main."; echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"; echo
+            cat sync-report.md 2>/dev/null || echo "(sin informe)"; } > /tmp/body.md
+          n="$(gh issue list --label sync-bot --state open --search "in:title \"$title\"" --json number --jq '.[0].number' || true)"
+          if [[ -n "$n" ]]; then gh issue comment "$n" --body-file /tmp/body.md; else gh issue create --title "$title" --label sync-bot --body-file /tmp/body.md; fi
+          exit 1
 
-      # ---------------------------------------------------------------
-      # exit 10/11: hay un bump -> construir la cadena entera y verificarla.
-      # Si falla, issue y NADA se pushea ni publica.
-      # ---------------------------------------------------------------
+      # Hay un bump -> construir la cadena entera y verificarla. Si falla,
+      # issue y NADA se pushea.
       - name: construir e instalar la cadena
         id: build
         if: steps.sync.outputs.code == '10' || steps.sync.outputs.code == '11'
@@ -90,61 +94,46 @@ jobs:
         run: |
           sudo -u builder env HOME=/home/builder ./scripts/build-all.sh --install
           ./scripts/verify-chain.sh
+          ./scripts/publish-repo.sh --check
 
       - name: abrir issue (el bump no construye)
         if: steps.build.outcome == 'failure'
         shell: bash
         run: |
+          git checkout -- packages upstream 2>/dev/null || true
           title="sync: el bump automatico no construye"
-          {
-            echo "El sincronizador aplico un bump pero la cadena no construye o no verifica. Nada se ha publicado."
-            echo
-            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo
-            cat sync-report.md
-          } > /tmp/issue-body.md
+          { echo "El sincronizador aplico un bump pero la cadena no construye o no verifica. No se ha tocado main."; echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"; echo
+            cat sync-report.md; } > /tmp/body.md
           n="$(gh issue list --label sync-bot --state open --search "in:title \"$title\"" --json number --jq '.[0].number' || true)"
-          if [[ -n "$n" ]]; then gh issue comment "$n" --body-file /tmp/issue-body.md; else
-            gh label create sync-bot --description "abierto por el sincronizador" --color 0E8A16 2>/dev/null || true
-            gh issue create --title "$title" --label sync-bot --body-file /tmp/issue-body.md; fi
+          if [[ -n "$n" ]]; then gh issue comment "$n" --body-file /tmp/body.md; else gh issue create --title "$title" --label sync-bot --body-file /tmp/body.md; fi
           exit 1
 
-      # ---------------------------------------------------------------
-      # exit 11: rutinario -> push a main + publicar aqui mismo
-      # ---------------------------------------------------------------
-      - name: push a main y publicar (rutinario)
+      # exit 11: rutinario -> commit y push a main (con rebase por si main avanzo)
+      - name: push a main (rutinario)
         if: steps.sync.outputs.code == '11' && steps.build.outcome == 'success'
         shell: bash
         run: |
           git add packages upstream
-          {
-            echo "sync: actualizacion rutinaria"
-            echo
-            cat sync-report.md
-            echo
-            echo "Construido y verificado en ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          } > /tmp/commit-msg.txt
-          git commit -F /tmp/commit-msg.txt
+          { echo "sync: actualizacion rutinaria"; echo; cat sync-report.md; echo
+            echo "Construido y verificado en ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"; } > /tmp/msg.txt
+          git commit -F /tmp/msg.txt
+          git pull --rebase origin main
           git push origin HEAD:main
-          ./scripts/publish-repo.sh --upload --check
 
-      # ---------------------------------------------------------------
-      # exit 10: necesita revision -> PR con el build ya en verde
-      # ---------------------------------------------------------------
+      # exit 10: necesita revision -> PR con el build ya en verde (enlazado en
+      # el cuerpo: un PR abierto por el bot NO tiene checks propios)
       - name: preparar cuerpo del PR
         if: steps.sync.outputs.code == '10' && steps.build.outcome == 'success'
         shell: bash
         run: |
-          {
-            cat sync-report.md
-            echo
-            echo "### Como revisarlo (3 lineas)"
-            echo "1. El check de este run esta en verde: la cadena entera construyo e instalo en un Arch limpio: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          { cat sync-report.md; echo
+            echo "### Como revisarlo"
+            echo "1. La cadena entera construyo, instalo y verifico en un Arch limpio en este run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "   (un PR abierto por el bot no dispara checks propios: ese enlace es la prueba)"
             echo "2. El diff toca solo pkgver/pkgrel/checksum (o _cvecommit) del paquete anunciado, y/o snapshots en upstream/solus/."
-            echo "3. Si quieres probarlo en tu maquina antes: \`gh pr checkout <n> && ./install.sh --compilar\` y monta Drive."
-            echo
-            echo "Al pulsar **Merge**, build.yml construye y publica en el Release \`repo\`; los usuarios lo reciben con \`pacman -Syu\`."
-          } > /tmp/pr-body.md
+            echo "3. Si quieres probarlo antes: \`gh pr checkout <n>\` y \`sudo systemctl start drive-gekko-repo.service\` en tu maquina (construye de esa rama)."
+            echo; echo "Al pulsar **Merge**, el temporizador de cada maquina lo recoge en su siguiente vuelta."; } > /tmp/pr-body.md
 
       - name: abrir PR
         if: steps.sync.outputs.code == '10' && steps.build.outcome == 'success'
@@ -160,31 +149,30 @@ jobs:
           body-path: /tmp/pr-body.md
           labels: sync-bot
 
-      # ---------------------------------------------------------------
-      # exit 0: nada que hacer. Cerrar issues que ya no aplican y keepalive.
-      # ---------------------------------------------------------------
-      - name: cerrar issues del bot que ya no aplican
+      # exit 0 con snapshots de Solus cambiados: se guardan (commit pequeno)
+      - name: guardar snapshots de Solus
         if: steps.sync.outputs.code == '0'
+        shell: bash
+        run: |
+          git add upstream
+          if git diff --cached --quiet; then echo "sin cambios en upstream/"; exit 0; fi
+          git commit -m "upstream: snapshot de Solus actualizado"
+          git pull --rebase origin main && git push origin HEAD:main
+
+      # Avisos (Solus cambio un flag, algo no se pudo leer...): issue deduplicado.
+      - name: abrir issue (avisos)
+        if: (steps.sync.outputs.code == '0' || steps.sync.outputs.code == '11' || steps.sync.outputs.code == '10') && steps.sync.outputs.WARNINGS != '0'
+        shell: bash
+        run: |
+          title="sync: avisos que necesitan una persona"
+          { echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"; echo; cat sync-report.md; } > /tmp/body.md
+          n="$(gh issue list --label sync-bot --state open --search "in:title \"$title\"" --json number --jq '.[0].number' || true)"
+          if [[ -n "$n" ]]; then gh issue comment "$n" --body-file /tmp/body.md; else gh issue create --title "$title" --label sync-bot --body-file /tmp/body.md; fi
+
+      - name: cerrar issues del bot que ya no aplican
+        if: steps.sync.outputs.code == '0' && steps.sync.outputs.WARNINGS == '0'
         shell: bash
         run: |
           gh issue list --label sync-bot --state open --json number --jq '.[].number' | while read -r n; do
             gh issue close "$n" --comment "El sincronizador ya no detecta este problema. Cerrado automaticamente."
-          done
-
-      # GitHub desactiva los cron de un repo publico tras 60 dias sin commits.
-      # Un commit trivial cada ~50 dias lo mantiene vivo.
-      - name: keepalive
-        if: steps.sync.outputs.code == '0'
-        shell: bash
-        run: |
-          last="$(git log -1 --format=%ct)"
-          now="$(date +%s)"
-          if (( now - last > 50*24*3600 )); then
-            date -u +%F > upstream/.keepalive
-            git add upstream/.keepalive
-            git commit -m "keepalive: mantener activo el cron de sync-upstream"
-            git push origin HEAD:main
-            echo "keepalive enviado"
-          else
-            echo "ultimo commit hace $(( (now-last)/86400 )) dias; sin keepalive"
-          fi
+          done || true

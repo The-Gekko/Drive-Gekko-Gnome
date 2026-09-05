@@ -28,10 +28,10 @@ on:
 permissions:
   contents: read
 
-# Mismo grupo que sync-upstream.yml: nunca dos publicaciones a la vez.
+# Un grupo por rama: los PR no se hacen cola con main.
 concurrency:
-  group: publicar
-  cancel-in-progress: false
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
@@ -65,18 +65,13 @@ jobs:
     name: construir la cadena completa
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # Escritura solo para el paso final de publicar (push a main). En un PR
-    # el token es de solo lectura de todos modos.
-    permissions:
-      contents: write
     container:
       image: archlinux:base-devel
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPO_GPG_KEY: ${{ secrets.REPO_GPG_KEY }}
     steps:
       - name: git para el checkout
-        run: pacman -Sy --noconfirm git
+        run: |
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Sy --noconfirm git
 
       - uses: actions/checkout@v7
 
@@ -115,6 +110,8 @@ jobs:
         run: |
           ./scripts/verify-chain.sh
           bash pacman-hooks/post-upgrade-check.sh
+          # el repo local que generaria una maquina: lista blanca + pacman lo lee
+          ./scripts/publish-repo.sh --check
 
       - name: namcap sobre los paquetes construidos
         shell: bash
@@ -126,12 +123,6 @@ jobs:
             echo "::endgroup::"
           done
 
-      # Solo cuando una persona hace push (o merge) a main: publicar el repo
-      # de pacman en el Release `repo`. Los pushes del bot no llegan aqui
-      # (no disparan workflows); el bot publica en su propio run.
-      - name: publicar el repositorio de pacman
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: ./scripts/publish-repo.sh --upload --check
 
   optional:
     name: deja-dup (opcional, referencia)

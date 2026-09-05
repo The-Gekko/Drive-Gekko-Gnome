@@ -9,5 +9,7 @@ la última vez que el sincronizador lo miró.
 toma de Solus son dos decisiones de compilación — `-Dgoogle=true` en gvfs y
 `-Dgoogle_files=true` en gnome-online-accounts — y estos ficheros existen para
 enterarse si Solus las cambia. Cuando `scripts/sync-upstream.sh` ve una
-diferencia, actualiza el fichero y lo señala en el PR o el issue para que una
-persona decida si el cambio nos afecta.
+diferencia, abre un issue con el antes y el después y guarda el snapshot nuevo
+en `main` (en un commit propio, o dentro del PR si hay uno), para que una
+persona decida si el cambio nos afecta. **No bloquea** los bumps rutinarios de
+los demás paquetes.

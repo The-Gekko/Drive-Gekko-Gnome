@@ -3,14 +3,12 @@
 # Lo usan build.yml y sync-upstream.yml, para que los dos preparen el entorno
 # EXACTAMENTE igual. Ejecutar como root, dentro del contenedor.
 #
-# Si existe la variable REPO_GPG_KEY (clave privada armored, desde un secreto
-# de GitHub), la importa y exporta GPG_KEY_ID para que publish-repo.sh firme.
 
 set -euo pipefail
 
 # El keyring de la imagen puede llevar semanas: se refresca antes de nada.
 pacman -Sy --noconfirm archlinux-keyring
-pacman -Syu --noconfirm git github-cli pacman-contrib sudo namcap \
+pacman -Syu --noconfirm git github-cli pacman-contrib sudo namcap fakeroot \
   meson ninja vala glib2-devel gobject-introspection
 
 # makepkg se niega a correr como root.
@@ -26,16 +24,6 @@ git config --global user.name  "drive-gekko-bot"
 git config --global user.email "drive-gekko-bot@users.noreply.github.com"
 sudo -u builder git config --global --add safe.directory "${GITHUB_WORKSPACE:-$(pwd)}"
 
-# Sin paquetes -debug: no se publican y solo ocupan.
-sed -i 's/^OPTIONS=(\(.*\)debug\(.*\))/OPTIONS=(\1!debug\2)/' /etc/makepkg.conf
-printf 'PACKAGER="Drive-Gekko-Gnome CI <drive-gekko-bot@users.noreply.github.com>"\n' >> /etc/makepkg.conf
-
-# Firma opcional.
-if [[ -n "${REPO_GPG_KEY:-}" ]]; then
-  printf '%s\n' "$REPO_GPG_KEY" | gpg --batch --import
-  GPG_KEY_ID="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')"
-  echo "GPG_KEY_ID=$GPG_KEY_ID" >> "${GITHUB_ENV:-/dev/null}"
-  echo "firma activada con la clave $GPG_KEY_ID"
-else
-  echo "sin REPO_GPG_KEY: el repo se publicara SIN firma"
-fi
+# Sin paquetes -debug: solo ocupan. Idempotente (una segunda pasada no toca nada).
+grep -qE '^OPTIONS=.*!debug' /etc/makepkg.conf || sed -i -E 's/^(OPTIONS=\(.*[[:space:](])debug([[:space:])])/\1!debug\2/' /etc/makepkg.conf
+grep -q '^PACKAGER=' /etc/makepkg.conf || printf 'PACKAGER="Drive-Gekko-Gnome CI <drive-gekko-bot@users.noreply.github.com>"\n' >> /etc/makepkg.conf

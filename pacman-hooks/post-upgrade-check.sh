@@ -55,6 +55,21 @@ goa_pide_drive() {
 }
 
 # ---------------------------------------------------------------------------
+# 0a. Si el repositorio esta en pacman.conf, tiene que ir ANTES de [extra]
+#     (se comprueba antes de nada: aplica aunque gvfs-google no este instalado)
+# ---------------------------------------------------------------------------
+_pos_repo="$(pacman-conf --repo-list 2>/dev/null | awk '$0=="drive-gekko-gnome"{print NR; exit}')"
+_pos_extra="$(pacman-conf --repo-list 2>/dev/null | awk '$0=="extra"{print NR; exit}')"
+if [[ -n "$_pos_repo" && -n "$_pos_extra" && "$_pos_repo" -gt "$_pos_extra" ]]; then
+  printf '%s  Drive-Gekko-Gnome: el repositorio esta DESPUES de [extra] en pacman.conf%s\n' "$Y" "$O"
+  printf '  pacman elige el primer repo que tenga el nombre: instalara el GOA de Arch\n'
+  printf '  (sin permiso de Drive) en la proxima actualizacion. Arreglo:\n'
+  printf '    sudo <repo>/scripts/add-repo.sh --local <repo>/out   (lo recoloca)\n\n'
+  notificar "El repositorio de Drive esta en mal sitio" "En /etc/pacman.conf, [drive-gekko-gnome] debe ir ANTES de [core] y [extra]."
+  ROTO=1
+fi
+
+# ---------------------------------------------------------------------------
 # 0. Si gvfs-google no esta instalado, esto no incumbe al usuario... salvo que
 #    acabe de quitarlo dejando nuestro GOA puesto: entonces un recordatorio.
 # ---------------------------------------------------------------------------
@@ -64,7 +79,7 @@ if ! pacman -Qq gvfs-google >/dev/null 2>&1; then
     printf '  de este repo sigue puesto. Si has quitado gvfs-google para desbloquear una\n'
     printf '  actualizacion de gvfs, reconstruyelo con el pkgver nuevo cuando termines.%s\n' "$O"
   fi
-  exit 0
+  exit $(( ROTO ? 0 : 0 ))
 fi
 
 # ---------------------------------------------------------------------------
@@ -80,10 +95,9 @@ if ! goa_pide_drive; then
   printf '  nuestro. Ya no pide el scope .../auth/drive, asi que Nautilus va a\n'
   printf '  dar "Permiso denegado" al abrir tu unidad.\n\n'
   printf '  Para arreglarlo:%s\n' "$Y"
-  printf '    Si tienes el repositorio [drive-gekko-gnome] en pacman.conf: comprueba que\n'
-  printf '    va ANTES de [core] (pacman-conf --repo-list) y ejecuta  sudo pacman -Syu\n'
-  printf '    Si compilas tu: docs/mantenimiento.md, Regla n.4 (pkgver de Arch,\n'
-  printf '    pkgrel <Arch>.1, b2sum del PKGBUILD oficial, makepkg -si)%s\n\n' "$O"
+  printf '    sudo systemctl start drive-gekko-repo.service   (trae y construye las recetas)\n'
+  printf '    sudo pacman -Syu                                (instala desde el repo local)\n'
+  printf '    Si aun no hay receta nueva, el bot no ha corrido: docs/automatizacion.md%s\n\n' "$O"
   notificar "Google Drive ha dejado de funcionar" \
     "Arch ha reinstalado gnome-online-accounts y se perdio el permiso de Drive. Reconstruye el paquete del repo Drive-Gekko-Gnome (docs/mantenimiento.md, Regla 4)."
   ROTO=1
@@ -102,9 +116,8 @@ if [[ -n "$_pin" && -n "$_gvfs" && "$_pin" != "$_gvfs" ]]; then
   printf '%s  Drive-Gekko-Gnome: gvfs cambio de version%s\n\n' "$Y" "$O"
   printf '    gvfs instalado : %s\n' "$_gvfs"
   printf '    pin del paquete: %s\n\n' "$_pin"
-  printf '  Con el repositorio: sudo pacman -Syu (si aun no trae el paquete nuevo, el\n'
-  printf '  sincronizador no ha corrido; espera o lanza Actions -> sync-upstream).\n'
-  printf '  Compilando tu: reconstruye gvfs-google con pkgver=%s.\n\n' "$_gvfs"
+  printf '  Arreglo: sudo systemctl start drive-gekko-repo.service && sudo pacman -Syu\n'
+  printf '  (si el bot aun no ha subido la receta para gvfs %s, espera o lanzalo en Actions)\n\n' "$_gvfs"
   notificar "Google Drive necesita reconstruirse" \
     "gvfs paso a la version ${_gvfs} y gvfs-google esta fijado a ${_pin}. Reconstruyelo antes de usar Drive."
   ROTO=1
@@ -119,20 +132,6 @@ if [[ -x /usr/lib/gvfsd-google ]] && ldd /usr/lib/gvfsd-google 2>/dev/null | gre
   printf '\n'
   notificar "Google Drive esta roto" "gvfsd-google ya no encuentra sus librerias. Reconstruye gvfs-google."
   ROTO=1
-fi
-
-# ---------------------------------------------------------------------------
-# 4. Si el repositorio esta en pacman.conf, tiene que ir ANTES de [extra]
-# ---------------------------------------------------------------------------
-if pacman-conf --repo-list 2>/dev/null | grep -qx drive-gekko-gnome; then
-  _order="$(pacman-conf --repo-list 2>/dev/null | tr '\n' ' ')"
-  if [[ "$_order" == *extra*drive-gekko-gnome* ]]; then
-    printf '%s  Drive-Gekko-Gnome: el repositorio esta DESPUES de [extra] en pacman.conf%s\n' "$Y" "$O"
-    printf '  pacman elige el primer repo que tenga el nombre: instalara el GOA de Arch\n'
-    printf '  (sin permiso de Drive) en la proxima actualizacion. Muevelo antes de [core].\n\n'
-    notificar "El repositorio de Drive esta en mal sitio" "En /etc/pacman.conf, [drive-gekko-gnome] debe ir ANTES de [core] y [extra]."
-    ROTO=1
-  fi
 fi
 
 if (( ROTO == 0 )); then

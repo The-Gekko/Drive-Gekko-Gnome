@@ -37,31 +37,39 @@
 
 ## Instalación
 
-**Necesitas:** Arch Linux con GNOME, `git`, un usuario con `sudo` y conexión a
-internet. Si tienes instalado el paquete `libsoup` (2.4) del AUR, quítalo
-antes: `libsoup2` lo sustituye.
+**Necesitas:** Arch Linux con GNOME, `base-devel` y `git`, un usuario con `sudo`,
+conexión a internet y unos 10 minutos de compilación. Si tienes instalado el
+paquete `libsoup` (2.4) del AUR, el script te pedirá quitarlo antes: `libsoup2`
+lo sustituye.
 
 ```bash
-sudo pacman -S --needed git
+sudo pacman -S --needed base-devel git
 git clone https://github.com/The-Gekko/Drive-Gekko-Gnome.git
 cd Drive-Gekko-Gnome
 ./install.sh
 ```
 
-Eso añade el repositorio de pacman de este proyecto a `/etc/pacman.conf` (en el
-sitio correcto: **antes** de `[core]`, ver abajo por qué), instala los cuatro
-paquetes ya construidos por el CI, **verifica que el resultado sirve** (que
-`gvfsd-google` enlaza y que GOA pide el permiso de Drive), y deja puestos el
-hook de pacman y el servicio de inicio de sesión que avisan si algo rompe el
-montaje. A partir de ahí, **`sudo pacman -Syu` mantiene estos paquetes al día**
-igual que los demás.
+El repositorio git es **privado**, así que los binarios no se publican en
+GitHub (pacman no puede bajar assets de un Release privado): **cada máquina los
+construye**. `install.sh`:
 
-Si prefieres compilarlo en tu máquina en vez de fiarte de los binarios del
-repo (necesita `base-devel` y unos 10 minutos):
+1. actualiza el sistema e instala las herramientas de compilación (`pacman -Syu`, tú confirmas)
+2. construye los cuatro paquetes en orden y los deja en un **repositorio de pacman local** (`out/`)
+3. pone ese repositorio en `/etc/pacman.conf`, **antes** de `[core]` (abajo el porqué)
+4. instala `gvfs-google` y `gnome-online-accounts` desde ahí con `pacman -Syu` (tú confirmas)
+5. deja puesto un **temporizador** (`drive-gekko-repo.timer`, cada 6 h) que hace `git pull` y,
+   si el bot cambió alguna receta, reconstruye y actualiza el repositorio local
+6. deja puestos el hook de pacman y el servicio de inicio de sesión que avisan si algo rompe el montaje
+7. **verifica** que el resultado sirve (que `gvfsd-google` enlaza y que GOA pide el permiso de Drive)
 
-```bash
-./install.sh --compilar
-```
+A partir de ahí, **`sudo pacman -Syu` instala las actualizaciones** que el
+temporizador haya construido, en la misma transacción que el `gvfs` o `libgoa`
+nuevo de Arch.
+
+> [!IMPORTANT]
+> **Una vez, para que el temporizador pueda hacer `git pull` de un repo
+> privado:** `gh auth login && gh auth setup-git` (con tu usuario). Sin eso el
+> temporizador avisa de que no tiene credencial, y las recetas nuevas no llegan.
 
 <details>
 <summary>Solo el bloque de pacman.conf, a mano</summary>
@@ -70,21 +78,16 @@ repo (necesita `base-devel` y unos 10 minutos):
 # ANTES de [core] y [extra]
 [drive-gekko-gnome]
 SigLevel = Optional TrustAll
-Server = https://github.com/The-Gekko/Drive-Gekko-Gnome/releases/download/repo
+Server = file:///ruta/al/clon/Drive-Gekko-Gnome/out
 ```
 
-```bash
-sudo pacman -Syu gvfs-google gnome-online-accounts
-```
+(con los espacios de la ruta como `%20`; `scripts/add-repo.sh --local <ruta>/out`
+lo escribe bien y lo recoloca si ya estaba en mal sitio)
 
 **Por qué antes de `[core]`:** `gnome-online-accounts` existe en `[extra]`, y
 pacman elige el *primer* repositorio de `pacman.conf` que tenga un paquete con
 ese nombre, sin mirar versiones. Si este repo va después, pacman instalará
 siempre el GOA de Arch (sin permiso de Drive) y no dirá nada.
-`scripts/add-repo.sh` lo coloca bien y avisa si ya está mal puesto.
-
-Firma: el repo se publica hoy sin firma GPG (integridad por HTTPS desde
-GitHub). Cómo activarla y endurecer `SigLevel`: [keys/README.md](keys/README.md).
 </details>
 
 ### El paso que no puede hacer el script
@@ -157,15 +160,24 @@ consecuencias — ver abajo.
 
 ## Cómo se mantiene solo
 
-Un bot (`.github/workflows/sync-upstream.yml`) mira cada 4 horas si Arch movió
-`gvfs` o `gnome-online-accounts`, si GNOME publicó un `libsoup` 2.74.x nuevo, si
-Arch amplió sus parches, y si Solus cambió los flags que nos importan. La
-regla:
+Dos piezas, cada una en su sitio:
 
-> **Si Arch sube el último número de gvfs o cualquier cosa de GOA, o amplía
-> los parches de libsoup, el bot construye, verifica y publica solo. Si cambia
-> otro número, si Solus toca sus flags o si se mueve libgdata, abre un PR y el
-> propietario pulsa Merge.** En ambos casos, `sudo pacman -Syu` lo trae.
+**En GitHub, un bot** (`.github/workflows/sync-upstream.yml`) mira cada 8 horas
+si Arch movió `gvfs` o `gnome-online-accounts`, si GNOME publicó un `libsoup`
+2.74.x nuevo, si Arch amplió sus parches, y si Solus cambió los flags que nos
+importan. Cuando hay un cambio, **construye y verifica la cadena entera en un
+Arch limpio** antes de tocar nada. La regla:
+
+> **Si Arch sube el último número de gvfs o cualquier cosa de GOA dentro de la
+> misma serie, el bot lo aplica solo en `main`. Si cambia de serie, si es
+> libsoup2 o libgdata, abre un PR y el propietario pulsa Merge. Si Solus toca
+> sus flags o algo no se puede leer, abre un issue y no bloquea lo demás.**
+
+**En tu máquina, un temporizador** (`drive-gekko-repo.timer`, cada 6 h) hace
+`git pull` y, solo si cambió alguna receta, reconstruye los paquetes y actualiza
+el repositorio local. **Tú instalas con `sudo pacman -Syu`**, cuando quieras,
+viendo la transacción: `gvfs-google` y `gnome-online-accounts` entran junto con
+el `gvfs`/`libgoa` nuevo de Arch, sin actualizaciones parciales.
 
 Por qué cada paquete sigue a quien sigue (y por qué *ninguno* sigue las
 versiones de Solus), qué pasa en cada caso y qué puede fallar:
@@ -175,9 +187,9 @@ versiones de Solus), qué pasa en cada caso y qué puede fallar:
 
 | Qué pasa | Cómo te enteras | Qué hacer |
 | --- | --- | --- |
-| Arch actualiza `gnome-online-accounts` o `gvfs` y el bot aún no ha publicado | `pacman -Syu` **se planta** con un conflicto de dependencias (el pin funcionando) | Esperar al bot (hasta 4 h), o *Actions → sync-upstream → Run workflow*. Con prisa: `pacman -Syu --ignore gvfs,libgoa` |
-| Alguien pone el repo después de `[extra]`, o instala el GOA de Arch a mano | El hook de pacman lo grita al terminar la transacción y llega una notificación | `sudo scripts/add-repo.sh` lo recoloca; `sudo pacman -Syu` |
-| Compilas tú (sin el repo) y Arch actualiza GOA | Lo mismo | [docs/mantenimiento.md](docs/mantenimiento.md), Regla nº 4 |
+| Arch actualiza `gvfs` o `gnome-online-accounts` y tu repositorio local aún no tiene la receta nueva construida | `pacman -Syu` **se planta** con un conflicto de dependencias (el pin funcionando, a propósito) | `sudo systemctl start drive-gekko-repo.service` (trae y construye) y repetir `pacman -Syu`. Si el bot aún no subió la receta: esperar (≤ 8 h) o *Actions → sync-upstream → Run workflow* |
+| Alguien pone el repo después de `[extra]`, o instala el GOA de Arch a mano | El hook de pacman lo grita al terminar la transacción y llega una notificación | `sudo scripts/add-repo.sh --local <repo>/out` lo recoloca; `sudo pacman -Syu` |
+| El temporizador no puede hacer `git pull` | Notificación: «git no tiene credencial» | `gh auth login && gh auth setup-git` una vez |
 | GNOME borra la opción `google` de gvfs | El bot abre un issue; `./scripts/check-updates.sh` lo avisa | Fin del camino: quedarte en la versión actual o migrar a rclone |
 
 El caso peligroso es el primero, porque **no da ningún error**: Drive
@@ -216,10 +228,13 @@ También puedes preguntarlo tú en cualquier momento:
 
 | Script | Para qué |
 | --- | --- |
-| `./install.sh` | Todo lo anterior de una vez (`--compilar` para construirlo aquí) |
-| `./scripts/add-repo.sh` | Solo el bloque de `pacman.conf`, en el sitio correcto |
+| `./install.sh` | Todo lo anterior de una vez |
+| `sudo scripts/local-repo.sh` | Lo que hace el temporizador: `git pull`, construir si cambió algo, repo local. `--dry-run` para ver el plan |
+| `./scripts/add-repo.sh --local DIR` | Solo el bloque de `pacman.conf`, en el sitio correcto (y lo recoloca si está mal) |
+| `./scripts/publish-repo.sh --check` | Genera `out/drive-gekko-gnome.db` (lista blanca de 4) y prueba que pacman la lee |
 | `./scripts/sync-upstream.sh` | Lo que hace el bot, en tu máquina: sin `--apply` solo informa |
 | `./scripts/verify-chain.sh` | ¿La cadena instalada sirve? ldd, pin, scope, libsoup 2.4 |
+| `./scripts/ci-prepare.sh` | Prepara el contenedor de Arch del CI (lo usan los dos workflows) |
 | `./scripts/check-updates.sh` | Versiones, el pin de gvfs, el estado de la opción `google` y si GOA sigue pidiendo el permiso de Drive |
 | `./scripts/check-sources.sh` | De qué repo puede salir hoy cada paquete: oficiales, AUR o Chaotic |
 | `./scripts/build-all.sh` | Construir la cadena por partes, o generar un repo local de pacman |
@@ -240,10 +255,11 @@ para el mismo tag.
 | `gnome-online-accounts` | `git+gitlab.gnome.org/GNOME/gnome-online-accounts.git#tag=3.58.1` | `b2sums` |
 
 Los parches de `libsoup2` se toman del paquete oficial de Arch
-(`git cherry-pick` sobre la rama de mantenimiento, como hace
+(`git cherry-pick` sobre la rama de mantenimiento `libsoup-2-74`, como hace
 [heftig](https://gitlab.archlinux.org/archlinux/packaging/packages/libsoup/-/issues/1)):
 17 commits, 9 de ellos de seguridad. El tarball pelado de 2.74.3 **no** los
-lleva.
+lleva. Cuando Arch amplía ese rango, el bot lo propone en un PR (nunca solo):
+comprueba que el commit existe en GNOME **y** que está en esa rama.
 
 ### Sobre el AUR
 
@@ -269,12 +285,11 @@ Drive-Gekko-Gnome/
 │   ├── gnome-online-accounts/     # GOA con -D google_files=true
 │   └── deja-dup/                  # opcional: sigue en [extra], aquí como referencia
 ├── pacman-hooks/                  # aviso post-actualización (terminal + notificación)
-├── systemd/                       # comprobación en cada inicio de sesión
+├── systemd/                       # temporizador de reconstrucción + comprobación de login
 ├── .github/workflows/
-│   ├── build.yml                  # con cada push a main: lint, cadena entera, publicar
-│   └── sync-upstream.yml          # cada 4 h: ¿hay que actualizar algo? auto / PR / issue
+│   ├── build.yml                  # con cada push/PR: lint y cadena entera en un Arch limpio
+│   └── sync-upstream.yml          # cada 8 h: ¿hay que actualizar algo? auto / PR / issue
 ├── upstream/solus/                # canario: el setup: de Solus la última vez que se miró
-├── keys/                          # firma del repo (opcional; cómo activarla)
 ├── CREDITS.md                     # quién hizo qué: Solus, Arch, GNOME
 ├── scripts/
 ├── docs/

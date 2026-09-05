@@ -1,8 +1,11 @@
 # Mantenimiento
 
-Guía de lo que hay que hacer cada vez que se toca un paquete. Antes de nada,
-lee [estado-upstream.md](estado-upstream.md): aquí mantenemos software que
-nadie mantiene, y eso cambia las reglas.
+Guía de lo que hay que hacer cada vez que se toca un paquete **a mano**. Lo
+normal es que no haga falta: el bot y el temporizador lo hacen solos
+([automatizacion.md](automatizacion.md)). Esto es para cuando quieras entender
+o repetir lo que ellos hacen. Antes de nada, lee
+[estado-upstream.md](estado-upstream.md): aquí mantenemos software que nadie
+mantiene, y eso cambia las reglas.
 
 ## Herramientas
 
@@ -130,8 +133,8 @@ LC_ALL=C pacman -Si gnome-online-accounts | grep '^Version'     # p.ej. 3.58.2-1
 
 # 2. edita packages/gnome-online-accounts/PKGBUILD:
 #      pkgver = el de Arch (3.58.2)
-#      pkgrel = MAYOR que el de Arch (si Arch tiene -1, pon 2), para que pacman
-#               no vuelva a preferir el oficial
+#      pkgrel = el de Arch seguido de ".1" (Arch -1 -> aqui 1.1; Arch -2 -> 2.1):
+#               vercmp lo pone justo por encima del oficial y nunca colisiona
 #      b2sums = el del PKGBUILD oficial de Arch para ese tag:
 #        https://gitlab.archlinux.org/archlinux/packaging/packages/gnome-online-accounts/-/raw/main/PKGBUILD
 #      (o regenéralo con updpkgsums y compáralo con ese)
@@ -140,7 +143,8 @@ LC_ALL=C pacman -Si gnome-online-accounts | grep '^Version'     # p.ej. 3.58.2-1
 cd packages/gnome-online-accounts && makepkg -si
 ```
 
-Si Arch solo subió `pkgrel` (3.58.1-2), basta con el paso 2 (pkgrel=3) y el 3.
+Si Arch solo subió `pkgrel` (3.58.1-2), basta con el paso 2 (pkgrel=2.1) y el 3.
+O, simplemente: `./scripts/sync-upstream.sh --apply` hace exactamente esto.
 
 ### ¿Por qué no fijarlo con `IgnorePkg` o `epoch`?
 
@@ -207,21 +211,20 @@ extra-x86_64-build -- -I ../libsoup2/libsoup2-*.pkg.tar.zst
 - [ ] `gdbus introspect --session --dest org.gnome.OnlineAccounts --object-path /org/gnome/OnlineAccounts/Accounts/<cuenta>` muestra `org.gnome.OnlineAccounts.Files`.
 - [ ] Probado con la sesión real: montar Drive y abrir un fichero.
 
-## Publicar el repo
+## El repositorio local
 
-Normalmente no lo haces tú: `build.yml` publica en el Release `repo` con cada
-push a `main`, y `sync-upstream.yml` publica sus propios bumps rutinarios. Ver
-[automatizacion.md](automatizacion.md). A mano (plan B, con `gh auth login`):
+No se publica nada en GitHub (el repo es privado). Cada máquina tiene su
+repositorio de pacman en `out/`, que mantiene `drive-gekko-repo.timer`. A mano:
 
 ```bash
-./scripts/build-all.sh --install      # construye la cadena en orden, deja los .pkg en out/
-./scripts/publish-repo.sh --check --upload
+sudo ./scripts/local-repo.sh          # git pull + construir si cambió algo + repo en out/
+sudo pacman -Syu                      # instala lo que haya nuevo
 ```
 
-Para un repo local (pruebas, o sin GitHub):
+Solo generar la `.db` a partir de lo que ya hay en `out/` y comprobarla:
 
 ```bash
-./scripts/build-all.sh --repo gekko
+./scripts/publish-repo.sh --check
 ```
 
 Genera `out/gekko.db.tar.zst`:
