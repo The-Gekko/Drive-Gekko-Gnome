@@ -1,0 +1,1 @@
+%meson_configure -Dprivileged_group=wheel -Dgoogle=true

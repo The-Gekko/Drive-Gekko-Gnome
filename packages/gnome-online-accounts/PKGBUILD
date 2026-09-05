@@ -40,7 +40,12 @@
 
 pkgname=gnome-online-accounts
 pkgver=3.58.1
-pkgrel=1
+# REGLA: pkgrel = <pkgrel de Arch>.1  (Arch 3.58.1-1 -> aqui 3.58.1-1.1)
+# vercmp: 1.1 > 1 y 1.1 < 2. Asi este paquete SIEMPRE gana al de [extra] en
+# version (pacman -U/-S --needed ya no lo omiten), nunca colisiona el nombre del
+# fichero en /var/cache/pacman/pkg con el de Arch, y cuando Arch publique -2 el
+# sincronizador pasara a -2.1. makepkg admite pkgrel con un punto decimal.
+pkgrel=1.1
 pkgdesc='Single sign-on framework for GNOME (compilado con -D google_files=true)'
 arch=('x86_64')
 url='https://gitlab.gnome.org/GNOME/gnome-online-accounts'

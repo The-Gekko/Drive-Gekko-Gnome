@@ -252,8 +252,10 @@ goa_drive_check
 
 cat <<'EOF'
 
-Si hay novedades: edita pkgver, pon pkgrel=1, ejecuta `updpkgsums` dentro de
-la carpeta del paquete y reconstruye. Detalles en docs/mantenimiento.md
+Si hay novedades, normalmente no tienes que hacer nada: el sincronizador
+(.github/workflows/sync-upstream.yml) lo aplica solo o te abre un PR. A mano:
+./scripts/sync-upstream.sh --apply   (o edita pkgver/pkgrel/checksum tu mismo)
+Detalles en docs/automatizacion.md y docs/mantenimiento.md
 
 Para saber de que repo puede salir hoy cada paquete: ./scripts/check-sources.sh
 EOF

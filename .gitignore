@@ -27,3 +27,6 @@ build/
 # Clones bare que makepkg deja al usar fuentes git+
 packages/libsoup2/libsoup/
 packages/gnome-online-accounts/gnome-online-accounts/
+
+# Informe temporal del sincronizador
+sync-report.md

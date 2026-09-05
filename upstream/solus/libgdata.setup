@@ -1,0 +1,1 @@
+%meson_configure -Dalways_build_tests=false -Doauth1=enabled

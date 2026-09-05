@@ -28,9 +28,10 @@ on:
 permissions:
   contents: read
 
+# Mismo grupo que sync-upstream.yml: nunca dos publicaciones a la vez.
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  group: publicar
+  cancel-in-progress: false
 
 jobs:
   lint:
@@ -64,23 +65,25 @@ jobs:
     name: construir la cadena completa
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Escritura solo para el paso final de publicar (push a main). En un PR
+    # el token es de solo lectura de todos modos.
+    permissions:
+      contents: write
     container:
       image: archlinux:base-devel
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO_GPG_KEY: ${{ secrets.REPO_GPG_KEY }}
     steps:
-      - name: Actualizar sistema
-        run: |
-          # El keyring de la imagen puede llevar semanas: se refresca primero.
-          pacman -Sy --noconfirm archlinux-keyring
-          pacman -Syu --noconfirm git pacman-contrib sudo
+      - name: git para el checkout
+        run: pacman -Sy --noconfirm git
 
       - uses: actions/checkout@v7
 
-      # makepkg se niega a correr como root: hace falta un usuario sin privilegios.
-      - name: Preparar usuario de build
-        run: |
-          useradd -m builder
-          install -m 0440 /dev/stdin /etc/sudoers.d/builder <<< 'builder ALL=(ALL) NOPASSWD: ALL'
-          chown -R builder:builder "$GITHUB_WORKSPACE"
+      # Mismo script que usa el sincronizador: los dos workflows preparan el
+      # contenedor exactamente igual.
+      - name: preparar el contenedor
+        run: ./scripts/ci-prepare.sh
 
       # Traduce la deriva de [extra] a un error legible ANTES de compilar nada.
       - name: los pines siguen en [extra]
@@ -99,52 +102,36 @@ jobs:
           done
           (( ok ))
 
-      # El orden NO es decorativo: libgdata necesita las cabeceras de libsoup2
-      # ya instaladas, y gvfs-google las de libgdata. Por eso se construye e
-      # instala uno a uno, en un solo job, en vez de una matriz en paralelo.
-      # Sin --needed: pacman omitiria nuestro gnome-online-accounts si el de
-      # Arch ya estuviera instalado con la misma version.
+      # El MISMO script que usan el propietario y el sincronizador. El orden
+      # no es decorativo: libgdata necesita las cabeceras de libsoup2 ya
+      # instaladas, y gvfs-google las de libgdata. Sin --needed (pacman
+      # omitiria nuestro GOA si el de Arch ya estuviera con la misma version).
       - name: libsoup2 -> libgdata -> gvfs-google -> gnome-online-accounts
-        shell: bash
-        run: |
-          for pkg in libsoup2 libgdata gvfs-google gnome-online-accounts; do
-            echo "::group::$pkg"
-            ( cd "packages/$pkg" \
-              && sudo -u builder makepkg --syncdeps --noconfirm --cleanbuild --install )
-            echo "::endgroup::"
-          done
+        run: sudo -u builder env HOME=/home/builder ./scripts/build-all.sh --install
 
-      # Las comprobaciones que de verdad dicen si esto sirve. `shell: bash`
-      # activa `-eo pipefail`; una negacion con `!` NO haria fallar el paso.
+      # Las comprobaciones que de verdad dicen si esto sirve (mismo script
+      # que install.sh y el sincronizador).
       - name: verificar el resultado
-        shell: bash
         run: |
-          echo "== gvfsd-google enlaza contra el gvfs del sistema =="
-          ldd /usr/lib/gvfsd-google
-          if ldd /usr/lib/gvfsd-google | grep -q 'not found'; then
-            echo "::error::gvfsd-google tiene librerias sin resolver"
-            exit 1
-          fi
-          echo "== GOA pide el permiso de Drive =="
-          if ! find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f \
-               -exec grep -aqE 'googleapis\.com/auth/drive( |$)' {} +; then
-            echo "::error::el gnome-online-accounts construido no pide el scope de Drive"
-            exit 1
-          fi
-          echo "== el hook de pacman da el visto bueno =="
+          ./scripts/verify-chain.sh
           bash pacman-hooks/post-upgrade-check.sh
 
       - name: namcap sobre los paquetes construidos
         shell: bash
         run: |
-          pacman -S --noconfirm namcap
           shopt -s nullglob
-          for p in packages/*/*.pkg.tar.zst; do
-            case "$p" in *-debug-*) continue ;; esac
+          for p in out/*.pkg.tar.zst; do
             echo "::group::$(basename "$p")"
             namcap "$p" || true
             echo "::endgroup::"
           done
+
+      # Solo cuando una persona hace push (o merge) a main: publicar el repo
+      # de pacman en el Release `repo`. Los pushes del bot no llegan aqui
+      # (no disparan workflows); el bot publica en su propio run.
+      - name: publicar el repositorio de pacman
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: ./scripts/publish-repo.sh --upload --check
 
   optional:
     name: deja-dup (opcional, referencia)

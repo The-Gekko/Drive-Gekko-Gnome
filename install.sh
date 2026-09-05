@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # install.sh — instala Google Drive en GNOME sobre Arch, de principio a fin.
 #
-#   ./install.sh
+#   ./install.sh               # modo repo (por defecto): anade el repositorio de
+#                              # pacman de este proyecto y instala los paquetes
+#                              # ya construidos. Rapido, y `pacman -Syu` los
+#                              # mantiene al dia.
+#   ./install.sh --compilar    # construye los cuatro paquetes aqui, en orden.
+#                              # Para quien no quiera depender del repo
+#                              # publicado, o para probar un PR.
 #
-# Construye los cuatro paquetes en orden, los instala, verifica que el resultado
-# sirve de verdad, y deja puestos el hook de pacman y el servicio de inicio de
-# sesion que avisan si una actualizacion de Arch rompe el montaje.
+# En los dos casos verifica que el resultado sirve de verdad, y deja puestos el
+# hook de pacman y el servicio de inicio de sesion que avisan si una
+# actualizacion de Arch rompe el montaje.
 #
 # NO ejecutar como root: makepkg lo rechaza. Pide sudo una vez al principio.
 
@@ -14,6 +20,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_DIR=/etc/pacman.d/hooks
 LIB_DIR=/usr/local/lib/drive-gekko-gnome
+MODE=repo
+case "${1:-}" in
+  ""|--repo) MODE=repo ;;
+  --compilar|--build) MODE=compilar ;;
+  -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+  *) echo "opcion desconocida: $1 (usa --repo o --compilar)" >&2; exit 1 ;;
+esac
 
 G=$'\033[1;32m'; C=$'\033[1;36m'; Y=$'\033[1;33m'; R=$'\033[1;31m'; O=$'\033[0m'
 info() { printf '%s==>%s %s\n' "$C" "$O" "$*"; }
@@ -37,9 +50,11 @@ MAKEDEPS=(git glib2-devel gobject-introspection meson ninja vala)
 # Comprobaciones previas: mejor parar aqui que a los veinte minutos.
 # ---------------------------------------------------------------------------
 [[ $EUID -eq 0 ]] && die "no ejecutes esto como root; se pedira sudo cuando haga falta"
-command -v makepkg >/dev/null || die "falta el grupo base-devel:  sudo pacman -S base-devel"
 command -v sudo    >/dev/null || die "falta sudo"
-command -v git     >/dev/null || warn "git no esta instalado; se instalara con las herramientas de compilacion"
+if [[ $MODE == compilar ]]; then
+  command -v makepkg >/dev/null || die "falta el grupo base-devel:  sudo pacman -S base-devel"
+  command -v git     >/dev/null || warn "git no esta instalado; se instalara con las herramientas de compilacion"
+fi
 
 # libsoup 2.4 del AUR (o de cuando estaba en [extra]) conflicta con libsoup2.
 if pacman -Qq libsoup >/dev/null 2>&1; then
@@ -63,49 +78,50 @@ fi
 info "pidiendo sudo (una sola vez)"
 sudo -v || die "sin sudo no se puede instalar nada"
 
-info "sincronizando repos e instalando herramientas de compilacion"
-sudo pacman -Sy --needed --noconfirm "${MAKEDEPS[@]}"
-ok "listas"
+if [[ $MODE == repo ]]; then
+  # -------------------------------------------------------------------------
+  # MODO REPO: el bloque de pacman.conf (ANTES de [core]: gnome-online-accounts
+  # sombrea al de Arch y pacman elige por orden de repos) y los paquetes ya
+  # construidos por el CI. libsoup2 y libgdata entran como dependencias.
+  # -------------------------------------------------------------------------
+  info "anadiendo el repositorio a /etc/pacman.conf"
+  sudo "${ROOT}/scripts/add-repo.sh" || die "no se pudo anadir el repositorio (¿esta despues de [core]?)"
+  info "instalando desde el repositorio"
+  sudo pacman -Syu --noconfirm gvfs-google gnome-online-accounts \
+    || die "pacman no pudo instalar. Si dice que gvfs-google requiere un gvfs que
+      no esta, es que Arch acaba de subir gvfs y el repo aun no ha publicado el
+      paquete nuevo: espera al siguiente run de sync-upstream (cada 4 h) o usa
+      ./install.sh --compilar"
+else
+  # -------------------------------------------------------------------------
+  # MODO COMPILAR: construir e instalar, uno a uno.
+  #
+  # NO se usa `makepkg -si --needed`: con --needed, pacman OMITE nuestro
+  # gnome-online-accounts cuando el de Arch ya esta instalado con la misma
+  # version. Se construye con makepkg y se instala con `pacman -U` a secas.
+  # -------------------------------------------------------------------------
+  info "sincronizando repos e instalando herramientas de compilacion"
+  sudo pacman -Sy --needed --noconfirm "${MAKEDEPS[@]}"
+  ok "listas"
+  for pkg in "${ORDER[@]}"; do
+    info "construyendo ${pkg}"
+    pushd "${ROOT}/packages/${pkg}" >/dev/null
+    makepkg -s --noconfirm --cleanbuild
+    # --packagelist respeta PKGDEST si el usuario lo tiene en makepkg.conf.
+    mapfile -t _built < <(makepkg --packagelist | grep -v -- '-debug-')
+    popd >/dev/null
+    (( ${#_built[@]} )) || die "${pkg}: makepkg no genero ningun paquete"
+    info "instalando ${pkg}"
+    sudo pacman -U --noconfirm "${_built[@]}"
+    ok "${pkg}"
+  done
+fi
 
 # ---------------------------------------------------------------------------
-# Construir e instalar, uno a uno.
-#
-# NO se usa `makepkg -si --needed`: con --needed, pacman OMITE nuestro
-# gnome-online-accounts cuando el de Arch ya esta instalado con la misma
-# version, que es exactamente el caso en cualquier escritorio GNOME. Se
-# construye con makepkg y se instala con `pacman -U` a secas, que reinstala.
-# ---------------------------------------------------------------------------
-for pkg in "${ORDER[@]}"; do
-  info "construyendo ${pkg}"
-  pushd "${ROOT}/packages/${pkg}" >/dev/null
-  makepkg -s --noconfirm --cleanbuild
-  # --packagelist respeta PKGDEST si el usuario lo tiene en makepkg.conf.
-  mapfile -t _built < <(makepkg --packagelist | grep -v -- '-debug-')
-  popd >/dev/null
-  (( ${#_built[@]} )) || die "${pkg}: makepkg no genero ningun paquete"
-  info "instalando ${pkg}"
-  sudo pacman -U --noconfirm "${_built[@]}"
-  ok "${pkg}"
-done
-
-# ---------------------------------------------------------------------------
-# Verificar que lo instalado sirve. Cada una de estas es un fallo real que se
-# ha visto en esta cadena; mejor que lo diga el script que Nautilus.
+# Verificar que lo instalado sirve (mismo script que el CI).
 # ---------------------------------------------------------------------------
 info "verificando"
-if ldd /usr/lib/gvfsd-google | grep -q 'not found'; then
-  ldd /usr/lib/gvfsd-google | grep 'not found' >&2
-  die "gvfsd-google tiene librerias sin resolver"
-fi
-ok "gvfsd-google enlaza contra el gvfs del sistema"
-
-if ! find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f \
-     -exec grep -aqE 'googleapis\.com/auth/drive( |$)' {} +; then
-  die "el gnome-online-accounts instalado NO pide el permiso de Drive.
-      Probablemente pacman instalo el de Arch en vez del nuestro. Comprueba:
-        pacman -Qi gnome-online-accounts | grep -iE 'packager|empaquetador'"
-fi
-ok "gnome-online-accounts pide el permiso de Drive"
+"${ROOT}/scripts/verify-chain.sh" || die "la cadena instalada no verifica; mira los mensajes de arriba"
 
 # ---------------------------------------------------------------------------
 info "instalando el hook de pacman"
@@ -145,4 +161,5 @@ Despues, tu unidad sale en la barra lateral de Nautilus. Para verificarlo:
 
   ls /run/user/\$(id -u)/gvfs/
 
+$( [[ $MODE == repo ]] && printf 'A partir de ahora, %ssudo pacman -Syu%s trae las actualizaciones de estos paquetes.\n' "$C" "$O" )
 FIN

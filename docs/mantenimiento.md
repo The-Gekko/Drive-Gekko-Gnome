@@ -209,6 +209,17 @@ extra-x86_64-build -- -I ../libsoup2/libsoup2-*.pkg.tar.zst
 
 ## Publicar el repo
 
+Normalmente no lo haces tú: `build.yml` publica en el Release `repo` con cada
+push a `main`, y `sync-upstream.yml` publica sus propios bumps rutinarios. Ver
+[automatizacion.md](automatizacion.md). A mano (plan B, con `gh auth login`):
+
+```bash
+./scripts/build-all.sh --install      # construye la cadena en orden, deja los .pkg en out/
+./scripts/publish-repo.sh --check --upload
+```
+
+Para un repo local (pruebas, o sin GitHub):
+
 ```bash
 ./scripts/build-all.sh --repo gekko
 ```
