@@ -15,9 +15,9 @@
 #      sesion que avisan si algo rompe el montaje
 #   6. verifica que el resultado sirve de verdad
 #
-# El repo git es privado, asi que los binarios no se publican en GitHub: cada
-# maquina los construye. El bot de GitHub Actions mantiene las RECETAS; el
-# temporizador de esta maquina las trae y las construye.
+# Los binarios no se publican en GitHub: cada maquina los construye. El bot de
+# GitHub Actions mantiene las RECETAS; el temporizador de esta maquina las trae
+# (el repo es publico: `git pull` sin credencial) y las construye.
 #
 # NO ejecutar como root: makepkg lo rechaza. Pide sudo al principio (y quiza
 # otra vez despues de compilar, si tarda mas que el timeout de sudo).
@@ -135,10 +135,7 @@ ${G}Instalado y verificado.${O} Queda un paso que solo puedes dar tu, en la inte
 
 Despues, tu unidad sale en la barra lateral de Nautilus:  ls /run/user/\$(id -u)/gvfs/
 
-${Y}Para que el temporizador pueda traer recetas nuevas del repo privado sin
-sesion abierta, guarda un token de GitHub de SOLO LECTURA (fine-grained,
-"Contents: Read" sobre este repo) en /etc/drive-gekko-gnome.token:${O}
-  sudo install -m 600 /dev/stdin /etc/drive-gekko-gnome.token <<< 'github_pat_...'
-Sin eso, el temporizador te avisara de que no puede hacer git pull.
+El temporizador (${C}drive-gekko-repo.timer${O}, cada 6 h) trae las recetas nuevas por su
+cuenta: el repo es publico y su ${C}git pull${O} no necesita ninguna credencial.
 
 FIN

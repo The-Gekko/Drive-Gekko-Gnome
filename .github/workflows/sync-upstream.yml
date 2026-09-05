@@ -7,9 +7,9 @@ name: sync-upstream
 #
 #   exit 0  -> nada que cambiar. Si hay avisos, issue. Cierra los que ya no apliquen.
 #   exit 11 -> cambios rutinarios: construye y verifica la cadena en un Arch
-#              limpio y hace push a main. Las maquinas lo recogen con su
-#              temporizador (drive-gekko-repo.timer): el repo es privado, los
-#              binarios no se publican en GitHub.
+#              limpio y hace push a main. Las maquinas recogen las RECETAS con
+#              su temporizador (drive-gekko-repo.timer) y construyen: por
+#              GitHub no pasa ningun binario.
 #   exit 10 -> cambios que necesitan una persona: construye y verifica para
 #              demostrar que funciona, y abre un PR.
 #   exit 20 -> fallo interno: descarta lo editado, issue, run en rojo.
@@ -18,8 +18,9 @@ name: sync-upstream
 # "Allow GitHub Actions to create and approve pull requests". Sin eso, abrir
 # el PR falla con 403 (los permisos de escritura los declara este fichero).
 #
-# Minutos de Actions (repo privado, cuota mensual): un run sin cambios son
-# unos 3 minutos; con build, 15-20. Cada 8 h son ~90 runs al mes.
+# Coste: un run sin cambios son unos 3 minutos; con build, 15-20. Cada 8 h son
+# ~90 runs al mes. En un repo publico los minutos de Actions en runners
+# estandar no se facturan, asi que la cadencia no esta limitada por cuota.
 
 on:
   schedule:

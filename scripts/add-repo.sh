@@ -78,4 +78,10 @@ fi
 cp -a "$CONF" "${CONF}.bak-drive-gekko-$(date +%Y%m%d%H%M%S)"
 printf '%s\n' "$new" > "$CONF"
 if (( had )); then echo "[$REPO_NAME] recolocado en $CONF (copia de seguridad al lado)."
-else echo "[$REPO_NAME] anadido a $CONF antes de [core] (copia de seguridad al lado). Ahora:  sudo pacman -Syu"; fi
+else
+  # El mensaje dice donde ha quedado de verdad: [core] puede no existir como
+  # seccion literal (Include) y entonces va antes de la primera que haya.
+  ante="$(grep -E "^\[" <<<"$new" | grep -A1 -xF "[${REPO_NAME}]" | tail -1)"
+  if [[ -n "$ante" && "$ante" != "[${REPO_NAME}]" ]]; then donde="antes de ${ante}"; else donde="al final del fichero"; fi
+  echo "[$REPO_NAME] anadido a $CONF ${donde} (copia de seguridad al lado). Ahora:  sudo pacman -Syu"
+fi

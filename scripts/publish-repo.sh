@@ -5,9 +5,9 @@
 #   ./scripts/publish-repo.sh            # genera la .db
 #   ./scripts/publish-repo.sh --check    # ademas la prueba como lo haria pacman
 #
-# Este repositorio se consume por file:// desde la misma maquina (el repo git
-# es privado: pacman no puede bajar assets de un Release privado, asi que los
-# binarios no se publican en GitHub). Lo usan install.sh, local-repo.sh y el CI.
+# Este repositorio se consume por file:// desde la misma maquina: los binarios
+# no se publican en GitHub, cada maquina construye los suyos a partir de las
+# recetas. Lo usan install.sh, local-repo.sh y el CI.
 #
 # Reglas:
 #   - Lista blanca CERRADA de 4 paquetes. Con el repo delante de [extra],

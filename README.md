@@ -49,9 +49,8 @@ cd Drive-Gekko-Gnome
 ./install.sh
 ```
 
-El repositorio git es **privado**, así que los binarios no se publican en
-GitHub (pacman no puede bajar assets de un Release privado): **cada máquina los
-construye**. `install.sh`:
+Los binarios no se publican en GitHub: **cada máquina los construye** a partir
+de las recetas de este repo. `install.sh`:
 
 1. actualiza el sistema e instala las herramientas de compilación (`pacman -Syu`, tú confirmas)
 2. construye los cuatro paquetes en orden y los deja en un **repositorio de pacman local** (`out/`)
@@ -66,18 +65,11 @@ A partir de ahí, **`sudo pacman -Syu` instala las actualizaciones** que el
 temporizador haya construido, en la misma transacción que el `gvfs` o `libgoa`
 nuevo de Arch.
 
-> [!IMPORTANT]
-> El repo es privado: el `git clone` ya te pedirá tu credencial de GitHub. Para
-> que el **temporizador** pueda hacer `git pull` sin sesión abierta (el llavero
-> de GNOME no está disponible), guarda un token de **solo lectura** (fine-grained,
-> *Contents: Read* sobre este repo) en `/etc/drive-gekko-gnome.token`:
->
-> ```bash
-> sudo install -m 600 /dev/stdin /etc/drive-gekko-gnome.token <<< 'github_pat_...'
-> ```
->
-> Sin eso el temporizador avisa de que no tiene credencial, y las recetas nuevas
-> no llegan.
+> [!NOTE]
+> El repo es público: ni el `git clone` ni el `git pull` del temporizador
+> necesitan credencial. Si vienes de una instalación anterior y guardaste un
+> token en `/etc/drive-gekko-gnome.token`, ya no sirve para nada:
+> `sudo rm /etc/drive-gekko-gnome.token`.
 
 <details>
 <summary>Solo el bloque de pacman.conf, a mano</summary>
@@ -197,7 +189,7 @@ versiones de Solus), qué pasa en cada caso y qué puede fallar:
 | --- | --- | --- |
 | Arch actualiza `gvfs` o `gnome-online-accounts` y tu repositorio local aún no tiene la receta nueva construida | `pacman -Syu` **se planta** con un conflicto de dependencias (el pin funcionando, a propósito) | `sudo systemctl start drive-gekko-repo.service` (trae y construye) y repetir `pacman -Syu`. Si el bot aún no subió la receta: esperar (≤ 8 h) o *Actions → sync-upstream → Run workflow* |
 | Alguien pone el repo después de `[extra]`, o instala el GOA de Arch a mano | El hook de pacman lo grita al terminar la transacción y llega una notificación | `sudo scripts/add-repo.sh --local <repo>/out` lo recoloca; `sudo pacman -Syu` |
-| El temporizador no puede hacer `git pull` | Notificación: «git no tiene credencial» | Token de solo lectura en `/etc/drive-gekko-gnome.token` (ver Instalación) |
+| El temporizador no puede hacer `git pull` | Notificación: «fallo al actualizar» y `journalctl -u drive-gekko-repo` | El repo es público, así que suele ser red, o un clon con el remoto en `ssh`: `git -C <clon> remote -v` debe apuntar al `https` |
 | GNOME borra la opción `google` de gvfs | El bot abre un issue; `./scripts/check-updates.sh` lo avisa | Fin del camino: quedarte en la versión actual o migrar a rclone |
 
 El caso peligroso es el segundo, porque **no da ningún error**: Drive

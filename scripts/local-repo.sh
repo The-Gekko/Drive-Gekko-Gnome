@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # local-repo.sh — mantiene el repositorio de pacman de ESTA maquina al dia con
-# las recetas de git. Es la pieza que sustituye a "publicar en GitHub" cuando
-# el repo es privado: pacman no puede bajar assets de un Release privado, asi
-# que los paquetes se construyen aqui.
+# las recetas de git. Los binarios no se publican en GitHub: el bot mantiene
+# las RECETAS y cada maquina construye las suyas aqui.
 #
 #   sudo ./scripts/local-repo.sh                # lo que hace el temporizador
 #   sudo ./scripts/local-repo.sh --force        # reconstruir aunque no haya cambios
@@ -22,13 +21,10 @@
 # El usuario y la ruta del clon se leen de /etc/drive-gekko-gnome.conf
 # (lo escribe install.sh) o de --user/--repo.
 #
-# CREDENCIAL para el `git pull` del repo privado: el temporizador corre sin
-# sesion grafica, asi que el llavero de GNOME (donde `gh auth login` guarda el
-# token) no esta disponible. Dos opciones, en este orden:
-#   1. /etc/drive-gekko-gnome.token (root, 600) con un token de GitHub de solo
-#      lectura (fine-grained, "Contents: Read" sobre este repo). Recomendado.
-#   2. una credencial de git del usuario que funcione sin sesion
-#      (p.ej. `gh auth login --insecure-storage && gh auth setup-git`).
+# El repo es PUBLICO: el `git pull` no necesita credencial, que es justo lo que
+# hace falta aqui (el temporizador corre sin sesion grafica, asi que el llavero
+# de GNOME no esta disponible). Si git llegara a pedir usuario, no es que falte
+# un token: es que el repo dejo de ser publico o el remoto del clon es ssh.
 
 set -euo pipefail
 export LC_ALL=C   # los mensajes de git/pacman se comparan en ingles
@@ -69,7 +65,7 @@ fi
 ORDER=(libsoup2 libgdata gvfs-google gnome-online-accounts)
 INSTALL_NOW=(libsoup2 libgdata)          # no existen en [extra]: instalarlos no pisa nada
 REPO_ONLY=(gvfs-google gnome-online-accounts)  # pinean gvfs/libgoa: los instala el -Syu del usuario
-OUT="$REPO/out"; REPO_NAME=drive-gekko-gnome; STAMP="$OUT/.built-from"
+OUT="$REPO/out"; STAMP="$OUT/.built-from"   # el nombre del repo lo pone publish-repo.sh
 
 log()  { printf '[drive-gekko] %s\n' "$*"; }
 # Ningun fallo en silencio: con set -e, un error sin mensaje seria invisible
@@ -89,16 +85,16 @@ notificar() {
 # 1. pull ---------------------------------------------------------------------
 if (( PULL )); then
   log "git pull como $USER_ en $REPO"
-  gitcred=()
-  if [[ -r /etc/drive-gekko-gnome.token ]]; then
-    # token de solo lectura, inyectado como helper de credenciales solo para
-    # este comando (no queda en ningun .gitconfig)
-    tok="$(tr -d '[:space:]' < /etc/drive-gekko-gnome.token)"
-    gitcred=(-c credential.helper= -c "credential.helper=!f(){ printf 'username=x-access-token\npassword=%s\n' '$tok'; }; f")
+  # Resto de una instalacion anterior, cuando el repo era privado. No estorba,
+  # pero es un token en disco que ya no pinta nada: mejor decirlo.
+  if [[ -e /etc/drive-gekko-gnome.token ]]; then
+    log "aviso: /etc/drive-gekko-gnome.token ya no hace falta (el repo es publico); puedes borrarlo"
   fi
-  if ! out="$(as_user env GIT_TERMINAL_PROMPT=0 LC_ALL=C git "${gitcred[@]}" -C "$REPO" pull --ff-only 2>&1)"; then
+  # credential.helper= vacio: desactiva cualquier helper heredado. Uno roto (o
+  # el llavero, que aqui no existe) haria fallar un pull que deberia ir solo.
+  if ! out="$(as_user env GIT_TERMINAL_PROMPT=0 LC_ALL=C git -c credential.helper= -C "$REPO" pull --ff-only 2>&1)"; then
     if grep -qE 'could not read Username|Authentication failed|terminal prompts disabled|Repository not found' <<<"$out"; then
-      die "git no tiene credencial para el repo privado. Guarda un token de solo lectura en /etc/drive-gekko-gnome.token (ver README)"
+      die "GitHub pide credencial para un repo que deberia ser publico: comprueba que el repo sigue siendo publico y que 'git -C $REPO remote -v' apunta al https, no al ssh"
     fi
     die "git pull fallo: $(tail -1 <<<"$out")"
   fi

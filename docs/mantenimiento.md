@@ -219,8 +219,9 @@ extra-x86_64-build -- -I ../../out/libsoup2-*.pkg.tar.zst   # los .pkg quedan en
 
 ## El repositorio local
 
-No se publica nada en GitHub (el repo es privado). Cada máquina tiene su
-repositorio de pacman en `out/`, que mantiene `drive-gekko-repo.timer`. A mano:
+En GitHub solo están las recetas: no se publica ningún binario. Cada máquina
+tiene su repositorio de pacman en `out/`, que mantiene `drive-gekko-repo.timer`.
+A mano:
 
 ```bash
 sudo ./scripts/local-repo.sh          # git pull + construir si cambió algo + repo en out/

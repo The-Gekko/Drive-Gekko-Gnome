@@ -35,5 +35,3 @@ for pkgbuild in "${REPO_ROOT}"/packages/*/PKGBUILD; do
 done
 
 exit "$STATUS"
-
-exit $STATUS
