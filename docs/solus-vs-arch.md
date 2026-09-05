@@ -1,8 +1,12 @@
 # De `package.yml` (Solus) a `PKGBUILD` (Arch)
 
-Las recetas de este repo nacen de los `package.yml` del monorepo de Solus.
-Aqui queda documentado que se tradujo, que se cambio y por que, para que un bump
-de version futuro no tenga que redescubrirlo.
+Las **opciones de compilación** de este repo nacen de los `package.yml` del
+monorepo de Solus ([getsolus/packages](https://github.com/getsolus/packages),
+MPL-2.0). No todo: `libsoup2` sigue la receta de Arch, y la estructura del
+PKGBUILD de `gnome-online-accounts` también es la de Arch. Aquí queda
+documentado qué se tomó de dónde, qué se cambió y por qué, para que un bump de
+versión futuro no tenga que redescubrirlo. Los créditos con nombres y commits
+están en [CREDITS.md](../CREDITS.md).
 
 Ojo con una diferencia de fondo: **Solus todavia mantiene la cadena de Google
 Drive viva** (compila gvfs con `google=true` y empaqueta libgdata), mientras
@@ -36,7 +40,7 @@ idea. Ver [estado-upstream.md](estado-upstream.md).
 | `pkgconfig(gtk4)`            | `gtk4`                |
 | `pkgconfig(libadwaita-1)`    | `libadwaita`          |
 | `pkgconfig(libsoup-3.0)`     | `libsoup3`            |
-| `pkgconfig(libsoup-2.4)`     | `libsoup` (¡el 2.4!)  |
+| `pkgconfig(libsoup-2.4)`     | `libsoup2` (de este repo; ya no existe `libsoup` en Arch) |
 | `pkgconfig(goa-1.0)`         | `libgoa`              |
 | `pkgconfig(gcr-4)`           | `gcr-4`               |
 | `pkgconfig(gcr-base-3)`      | `gcr`                 |
@@ -105,7 +109,13 @@ Solus compila:
 Arch usa el valor por defecto de esa opción, que upstream puso en `false` en
 febrero de 2026 (*«build: Disable google provider Files feature»*). Es la única
 diferencia entre que Drive funcione y que no, y no se ve por ninguna parte:
-ambos empaquetan el mismo tarball 3.58.1, sin parches.
+ambos compilan el mismo tag 3.58.1 de GNOME, sin parches.
+
+El flag lo añadió **Joey Riches** en Solus el 21 de marzo de 2026 (commit
+[a4be647](https://github.com/getsolus/packages/commit/a4be6479d5e3fcc97151a5451a588efd27a04779),
+GOA 3.58.0), junto a un parche `reenable-google-support.patch` que en 3.58.1
+dejó de hacer falta ([7bcc7fd](https://github.com/getsolus/packages/commit/7bcc7fdc585351b360a197d164673dadd6248f29)).
+Por eso este repo, en 3.58.1, solo necesita el flag.
 
 Aquí se replica la decisión de Solus, pero **solo se reemplaza el paquete
 `gnome-online-accounts`**: `libgoa` y `libgoa-docs` siguen siendo los oficiales

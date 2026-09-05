@@ -22,10 +22,18 @@ for pkgbuild in "${REPO_ROOT}"/packages/*/PKGBUILD; do
   fi
 
   if command -v namcap >/dev/null; then
-    namcap "$pkgbuild" || STATUS=1
+    # namcap sale siempre con 0: hay que mirar si imprime errores (lineas "E:").
+    _out="$(namcap "$pkgbuild" 2>&1 || true)"
+    [[ -n "$_out" ]] && printf '%s\n' "$_out" | sed 's/^/    /'
+    if grep -qE '^[^ ]+ E: ' <<<"$_out"; then
+      echo "    namcap: ERRORES"
+      STATUS=1
+    fi
   else
     echo "    namcap no instalado, se omite (pacman -S namcap)"
   fi
 done
 
 exit "$STATUS"
+
+exit $STATUS

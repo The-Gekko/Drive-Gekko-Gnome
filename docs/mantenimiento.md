@@ -39,9 +39,11 @@ curl -s https://download.gnome.org/sources/libgdata/0.18/libgdata-0.18.1.sha256s
 > ```
 
 `libsoup2` y `gnome-online-accounts` no usan tarball: clonan el tag de GNOME y
-se verifican con `b2sums` del checkout, igual que hace Arch. Ahí `updpkgsums`
-no aplica; si cambias de tag, copia el `b2sum` del PKGBUILD oficial de Arch o
-recalcúlalo con `makepkg --verifysource`.
+se verifican con `b2sums` del checkout, igual que hace Arch. `updpkgsums` (y
+`makepkg -g`) también recalculan ese `b2sum` para fuentes `git+…#tag=`, así que
+el flujo es el mismo. Si cambias de tag, el valor debe coincidir con el del
+PKGBUILD oficial de Arch para ese mismo tag: es una segunda comprobación
+gratis.
 
 ## Regla nº 2: `gvfs-google` va atado a `gvfs`
 
@@ -53,7 +55,7 @@ Por eso el `depends` lleva `gvfs=$pkgver` exacto. Cuando Arch publique una
 versión nueva:
 
 ```bash
-pacman -Si gvfs | grep Version          # p.ej. 1.60.3-1
+LC_ALL=C pacman -Si gvfs | grep '^Version'   # p.ej. 1.60.3-1 (en cualquier idioma)
 cd packages/gvfs-google
 $EDITOR PKGBUILD                        # pkgver=1.60.3, pkgrel=1
 updpkgsums
@@ -76,8 +78,9 @@ Los **parches de CVE** vienen del paquete oficial de Arch: el `prepare()` hace
 Arch amplíe ese rango, actualiza `_cvecommit` en el PKGBUILD contrastándolo con
 `https://aur.archlinux.org/libsoup.git`.
 
-Lo que sí hay que vigilar de libsoup2 son los **avisos de seguridad**, porque
-ya no llegan parches upstream:
+Lo que sí hay que vigilar de libsoup2 son los **avisos de seguridad**. Ya no
+hay *releases* de la serie 2.x, pero sí commits en su rama de mantenimiento
+(los que Arch recoge con el cherry-pick); el rango se actualiza a mano:
 
 ```bash
 # el tracker de Arch sigue listando los CVEs históricos del paquete
@@ -117,11 +120,27 @@ Los tres ejecutan el mismo script. La comprobación de fondo es:
 strings /usr/lib/libgoa-backend-1.0.so | grep googleapis.com/auth/drive
 ```
 
-Si no devuelve nada, Drive está roto. Se arregla reconstruyendo:
+Si no devuelve nada, Drive está roto. **No basta con `makepkg -si` tal cual**,
+porque el PKGBUILD lleva `depends=("libgoa=${pkgver}")` y Arch acaba de subir
+`libgoa`. El arreglo son tres pasos:
 
 ```bash
+# 1. ¿qué versión tiene Arch ahora?
+LC_ALL=C pacman -Si gnome-online-accounts | grep '^Version'     # p.ej. 3.58.2-1
+
+# 2. edita packages/gnome-online-accounts/PKGBUILD:
+#      pkgver = el de Arch (3.58.2)
+#      pkgrel = MAYOR que el de Arch (si Arch tiene -1, pon 2), para que pacman
+#               no vuelva a preferir el oficial
+#      b2sums = el del PKGBUILD oficial de Arch para ese tag:
+#        https://gitlab.archlinux.org/archlinux/packaging/packages/gnome-online-accounts/-/raw/main/PKGBUILD
+#      (o regenéralo con updpkgsums y compáralo con ese)
+
+# 3. reconstruye e instala
 cd packages/gnome-online-accounts && makepkg -si
 ```
+
+Si Arch solo subió `pkgrel` (3.58.1-2), basta con el paso 2 (pkgrel=3) y el 3.
 
 ### ¿Por qué no fijarlo con `IgnorePkg` o `epoch`?
 
@@ -162,8 +181,17 @@ por dependencias que tienes instaladas y no están declaradas. El chroot lo
 detecta:
 
 ```bash
-cd packages/libgdata
+cd packages/libsoup2
 extra-x86_64-build           # requiere devtools
+```
+
+Ojo: funciona para `libsoup2` y `gnome-online-accounts` (todas sus dependencias
+están en repos), pero **no** para `libgdata` ni `gvfs-google` tal cual: el
+chroot limpio no tiene `libsoup2` ni `libgdata`. Para esos dos hay que pasarle
+los paquetes ya construidos con `-I`:
+
+```bash
+extra-x86_64-build -- -I ../libsoup2/libsoup2-*.pkg.tar.zst
 ```
 
 ## Checklist por paquete
@@ -193,8 +221,12 @@ SigLevel = Optional TrustAll
 Server = file:///ruta/a/Drive-Gekko-Gnome/out
 ```
 
-Ninguno de estos paquetes existe ya en los repos oficiales, así que el orden
-respecto a `[extra]` da igual. Ponlo al final para no sombrear nada por error.
+**El orden importa.** `libsoup2`, `libgdata` y `gvfs-google` no existen en
+`[extra]`, pero `gnome-online-accounts` sí. pacman elige el **primer**
+repositorio de `pacman.conf` que tenga un paquete con ese nombre, sin mirar
+versiones. Si `[gekko]` va después de `[extra]`, `pacman -Syu` instalará
+siempre el GOA de Arch — el que no pide el permiso de Drive — y no dirá nada.
+Ponlo **antes** de `[core]` y `[extra]`.
 
 Para firmar (recomendado si lo sirves por HTTP, y más aún tratándose de
 paquetes sin upstream):
@@ -211,7 +243,7 @@ y cambia `SigLevel` a `Required DatabaseOptional`.
 
 | Riesgo | Detalle | Qué hacer |
 | --- | --- | --- |
-| libsoup 2.4 sin upstream | Los CVEs de 2025 fueron el motivo de que las distros la echaran. Ya no hay quien parchee. | Vigilar el tracker; si algo grave toca el camino de libgdata, migrar a rclone. |
+| libsoup 2.4 sin releases | Los CVEs de 2025 fueron el motivo de que las distros la echaran. Quedan commits en la rama de mantenimiento, que Arch recoge; nadie publica releases. | Vigilar el tracker y el rango de cherry-pick de Arch; si algo grave toca el camino de libgdata sin arreglo en la rama, migrar a rclone. |
 | `libgdata` archivada | Sin mantenedor ~4 años. GNOME archivó el repo. | Nada que hacer salvo congelar 0.18.1 y vigilar si aparece un sustituto sobre libsoup3. |
 | Confusión sobre el AUR | `libgdata` figura en la lista de Atomic Arch (jun 2026), pero su git del AUR no tiene commits dentro de la ventana y su PKGBUILD es el de Arch. | No hay que temer al AUR aquí. Este repo existe porque `gvfs-google` y el GOA recompilado no están en ninguna parte. |
 | `gvfs` sube en `[extra]` | Rompe `gvfs-google` por el soname sin versionar. | Reconstruir según la Regla nº 2. |

@@ -79,7 +79,9 @@ for pkg in "${ORDER[@]}"; do
 
   (( DO_CLEAN )) && rm -rf src pkg
 
-  makepkg_args=(--syncdeps --cleanbuild --noconfirm --needed)
+  # Sin --needed a proposito: con el, pacman OMITE nuestro gnome-online-accounts
+  # cuando el de Arch ya esta instalado con la misma version (caso normal).
+  makepkg_args=(--syncdeps --cleanbuild --noconfirm)
   (( DO_INSTALL )) && makepkg_args+=(--install)
 
   if ! makepkg "${makepkg_args[@]}"; then
@@ -88,13 +90,13 @@ for pkg in "${ORDER[@]}"; do
   fi
 
   # Los .pkg.tar.zst se centralizan en out/ para poder firmarlos o servirlos.
-  shopt -s nullglob
-  built=(*.pkg.tar.zst)
-  shopt -u nullglob
+  # --packagelist respeta PKGDEST si el usuario lo tiene en makepkg.conf.
+  mapfile -t built < <(makepkg --packagelist 2>/dev/null)
   (( ${#built[@]} )) || warn "${pkg}: no se genero ningun .pkg.tar.zst"
   for f in "${built[@]}"; do
+    [[ -f "$f" ]] || continue
     mv -f "$f" "$OUT_DIR/"
-    ok "${f}"
+    ok "$(basename "$f")"
   done
 
   popd >/dev/null
@@ -102,16 +104,22 @@ done
 
 if [[ -n "$REPO_NAME" ]]; then
   info "generando repo local '${REPO_NAME}' en ${OUT_DIR}"
-  ( cd "$OUT_DIR" && repo-add --new --remove "${REPO_NAME}.db.tar.zst" ./*.pkg.tar.zst )
+  # Sin --new: con el, repo-add no actualiza la entrada si se reconstruye un
+  # paquete con la misma version (p.ej. cambiar depends sin subir pkgrel).
+  ( cd "$OUT_DIR" && repo-add --remove "${REPO_NAME}.db.tar.zst" ./*.pkg.tar.zst )
+  # pacman rechaza URLs con espacios: se codifican.
+  _url="file://${OUT_DIR// /%20}"
   cat <<EOFMSG
 
-Repo listo. Anade esto a /etc/pacman.conf. Como ninguno de estos paquetes
-existe ya en los repos oficiales, el orden respecto a [extra] da igual: ponlo
-al final para no sombrear nada por accidente.
+Repo listo. Anade esto a /etc/pacman.conf, y OJO AL ORDEN: tiene que ir ANTES
+de [core] y [extra]. gnome-online-accounts existe en [extra], y pacman elige el
+primer repositorio que tenga el nombre, sin mirar versiones; si [${REPO_NAME}]
+va despues, pacman instalara siempre el GOA de Arch, que no pide el permiso de
+Drive, y no dara ningun error.
 
 [${REPO_NAME}]
 SigLevel = Optional TrustAll
-Server = file://${OUT_DIR}
+Server = ${_url}
 
 Luego: sudo pacman -Syu
 EOFMSG

@@ -25,3 +25,16 @@ USO U OTRO TIPO DE ACCIONES EN EL SOFTWARE.
 Nota: esta licencia cubre unicamente los PKGBUILD, scripts y documentacion de
 este repositorio. El software empaquetado (gvfs, libgdata, deja-dup) conserva
 la licencia de sus respectivos autores.
+
+---
+
+Nota sobre el origen de las recetas (no forma parte de la licencia MIT anterior):
+
+Los PKGBUILD, scripts y documentación de este repositorio se escribieron para
+Arch y van bajo MIT. Reproducen decisiones de configuración tomadas de las
+recetas `package.yml` de Solus (https://github.com/getsolus/packages, MPL-2.0)
+y del PKGBUILD oficial de gnome-online-accounts de Arch Linux (0BSD); ningún
+fichero de esos proyectos se copia aquí. Si en el futuro se incorporara un
+fichero de Solus tal cual (por ejemplo un parche), ese fichero conservaría la
+MPL-2.0 y su aviso, y quedaría anotado en CREDITS.md. Cada paquete construido
+conserva la licencia de su código fuente (ver CREDITS.md).

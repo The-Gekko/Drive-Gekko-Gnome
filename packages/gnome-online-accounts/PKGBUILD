@@ -1,6 +1,10 @@
 # Maintainer: The-Gekko <thegekko5426@gmail.com>
 # Contributor: Drive-Gekko-Gnome
-# Basado en el PKGBUILD oficial de Arch (heftig, fabiscafe)
+# Basado en el PKGBUILD oficial de Arch (heftig, fabiscafe; licencia 0BSD):
+#   https://gitlab.archlinux.org/archlinux/packaging/packages/gnome-online-accounts
+# Opcion -D google_files=true tomada de la receta de Solus (MPL-2.0):
+#   https://github.com/getsolus/packages/blob/main/packages/g/gnome-online-accounts/package.yml
+#   la anadio Joey Riches el 2026-03-21, commit a4be6479d5e3fcc97151a5451a588efd27a04779
 #
 # ############################################################################
 # POR QUE ESTE PAQUETE EXISTE AQUI
@@ -82,8 +86,8 @@ source=("git+https://gitlab.gnome.org/GNOME/${pkgname}.git#tag=${pkgver}")
 b2sums=('602f36235a44052e0a0b7feea7574f659144bb70f4f97b50c6d020927b6d153290cc0396d38265d20f36a2c2d8f920817c187ef6584279623935c3c9ed74ea8e')
 
 build() {
-  # La UNICA diferencia con Arch es -D google_files=true.
-  # documentation=false evita gi-docgen, que aqui no aporta nada.
+  # Diferencias con Arch: -D google_files=true (lo que importa) y
+  # -D documentation=false (evita gi-docgen; es lo mismo que hace Solus).
   arch-meson "${pkgname}" build \
     -D google_files=true \
     -D documentation=false \
@@ -102,8 +106,11 @@ package() {
   # descubrirlo despues con un "Permiso denegado" sin explicacion.
   # El scope vive en libgoa-backend (goabackend/goagoogleprovider.c), no en el
   # daemon. Se busca con glob para que sobreviva a cambios de soname.
-  if ! find usr/lib -name 'libgoa-backend-1.0.so*' -type f -exec strings {} + 2>/dev/null \
-       | grep -q 'googleapis.com/auth/drive'; then
+  # grep -a lee el binario directamente: no depende de binutils. El patron
+  # exige 'drive' seguido de espacio o fin de linea para no dar por bueno un
+  # scope parcial (drive.file, drive.readonly).
+  if ! find usr/lib -name 'libgoa-backend-1.0.so*' -type f \
+       -exec grep -aqE 'googleapis\.com/auth/drive( |$)' {} +; then
     echo "ERROR: goa-daemon no pide el scope de Drive." >&2
     echo "       revisa si la opcion google_files sigue existiendo en GOA ${pkgver}" >&2
     return 1

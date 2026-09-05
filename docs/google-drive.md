@@ -43,8 +43,9 @@ strings /usr/lib/libgoa-backend-1.0.so | grep auth/drive  # debe salir algo
 
 La segunda es la que casi nadie hace y la que más falla.
 
-Si sale algo, casi siempre es que `gvfs` de `[extra]` subió de versión y hay
-que reconstruir `gvfs-google` (Regla nº 2 de docs/mantenimiento.md).
+Si la **primera** muestra algo (`not found`), casi siempre es que `gvfs` de
+`[extra]` subió de versión y hay que reconstruir `gvfs-google` (Regla nº 2 de
+docs/mantenimiento.md). Si la **segunda** no muestra nada, es GOA (Regla nº 4).
 
 ## 2. Añadir la cuenta
 
@@ -129,7 +130,7 @@ Recomendaciones:
 | --- | --- | --- |
 | No aparece el interruptor *Archivos* | GOA compilado sin `google_files` (el de Arch lo está) | `strings /usr/lib/libgoa-backend-1.0.so \| grep auth/drive` |
 | *«Permiso denegado»* al montar, con todo instalado | el token OAuth es anterior y no tiene el permiso de Drive | quitar y volver a añadir la cuenta |
-| Funcionaba y de pronto dejó de ir | Arch actualizó `gnome-online-accounts` encima del nuestro | `cd packages/gnome-online-accounts && makepkg -si` |
+| Funcionaba y de pronto dejó de ir | Arch actualizó `gnome-online-accounts` encima del nuestro | Regla nº 4 de [mantenimiento.md](mantenimiento.md): subir `pkgver`/`pkgrel` y reconstruir |
 | La cuenta aparece pero no hay carpeta | `gvfs-goa` ausente o su monitor no arranca | `systemctl --user status gvfs-goa-volume-monitor` |
 | `gvfsd-google` muere al arrancar | `gvfs` subió de versión y el soname sin versionar ya no cuadra | `ldd /usr/lib/gvfsd-google \| grep -i "not found"` |
 | Pide login en cada arranque | llavero bloqueado | `systemctl --user status gnome-keyring-daemon` |

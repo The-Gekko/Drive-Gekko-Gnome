@@ -8,10 +8,13 @@
 # poder lanzar la notificacion.
 #
 # Instalar en: ~/.config/systemd/user/drive-gekko-check.service
-#   systemctl --user enable --now drive-gekko-check.service
+#   systemctl --user enable drive-gekko-check.service
 
 [Unit]
 Description=Drive-Gekko-Gnome: comprobar que Google Drive sigue accesible
+# Se engancha a graphical-session.target, no a default.target: asi solo corre
+# en inicios de sesion graficos (donde hay a quien notificar) y el After= tiene
+# efecto real. GNOME arranca ese target desde gnome-session.
 After=graphical-session.target
 
 [Service]
@@ -23,4 +26,4 @@ ExecStartPre=/usr/bin/sleep 20
 ExecStart=/usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

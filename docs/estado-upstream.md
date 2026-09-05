@@ -15,10 +15,10 @@ uno mismo. Este documento explica cómo se llegó ahí y qué alternativas hay.
 | ~2022 | GNOME pide ayuda para `libgdata`: todo lo demás migró a libsoup 3, libgdata se quedó en libsoup 2.4. Nadie la adopta. |
 | ~2025 | gvfs desactiva la opción `google` (MR !266). El texto del propio MR recomienda a las distros dejarla apagada, y sugiere que quien la eche de menos porte la parte de Drive a una librería nueva sobre libsoup3. |
 | ago–nov 2025 | Debian y Ubuntu quitan el backend de Google de `gvfs-backends`. Motivo declarado: libgdata está sin mantener, sigue en libsoup 2.4, y el equipo de seguridad no quiere seguir parcheando libsoup2 (CVEs de 2025). |
-| ~mar 2026 | `libgdata` se **archiva** en GNOME GitLab. GNOME Online Accounts empieza a comprobar si existe el backend antes de ofrecer siquiera el interruptor de *Archivos* en la cuenta de Google. |
+| **19 feb 2026** | **GNOME Online Accounts mete el soporte de Drive detrás de la opción de compilación `google_files`, apagada por defecto** (commit *«build: Disable google provider Files feature»*). Arch compila con el valor por defecto; Solus pasa `-Dgoogle_files=true`. Esta es la pieza que casi nadie ve: sin ella, `gvfsd-google` no sirve de nada. |
+| ~mar 2026 | `libgdata` se **archiva** en GNOME GitLab. |
 | may 2026 | Arch retira `libgdata` y `libsoup` (2.4) de los repos oficiales. Ambos aparecen en el AUR el 31 de mayo. |
 | 11–12 jun 2026 | Incidente **"Atomic Arch"**: se adoptan masivamente paquetes huérfanos del AUR y se les inyecta malware (un paquete npm `atomic-lockfile` que suelta un robador de credenciales en Rust). Arch cifra el alcance en ~400 al principio, y luego se habla de más de 1500. `libgdata` figura en la lista consolidada de paquetes afectados, aunque su repositorio git del AUR no tiene ningún commit dentro de la ventana del ataque (ver más abajo). Los repos oficiales **no** se vieron afectados. |
-| **19 feb 2026** | **GNOME Online Accounts mete el soporte de Drive detrás de la opción de compilación `google_files`, apagada por defecto** (commit *«build: Disable google provider Files feature»*). Arch compila con el valor por defecto; Solus pasa `-Dgoogle_files=true`. Esta es la pieza que casi nadie ve: sin ella, `gvfsd-google` no sirve de nada. |
 | ago 2026 | `gvfs` 1.60.2-4 en `[extra]` lleva `Replaces/Conflicts: gvfs-google<=1.58.3-1` y ya no instala `gvfsd-google`. |
 
 ## Situación hoy en Arch
@@ -39,7 +39,7 @@ uno mismo. Este documento explica cómo se llegó ahí y qué alternativas hay.
 La pregunta razonable es: si `libgdata` y `libsoup` están en el AUR, ¿por qué
 compilar aquí? La respuesta honesta, después de comprobarlo:
 
-**Chaotic-AUR queda descartado sin discusión**: no tiene ninguno de los tres.
+**Chaotic-AUR queda descartado sin discusión**: no tiene ninguno de los que faltan (`libsoup` 2.4, `libgdata`, `gvfs-google`).
 Comprobado con `pacman -Sl chaotic-aur` sobre una base de 3149 paquetes.
 
 **El AUR, en cambio, está bien.** Se clonó el git de ambos y se revisó:

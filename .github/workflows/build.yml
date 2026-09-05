@@ -7,6 +7,7 @@ on:
       - 'packages/**'
       - 'scripts/**'
       - 'pacman-hooks/**'
+      - 'systemd/**'
       - 'install.sh'
       - '.github/workflows/build.yml'
   pull_request:
@@ -14,20 +15,37 @@ on:
       - 'packages/**'
       - 'scripts/**'
       - 'pacman-hooks/**'
+      - 'systemd/**'
       - 'install.sh'
+      - '.github/workflows/build.yml'
+  # Los pines (gvfs=, libgoa=) apuntan a [extra]. Cuando Arch los mueva, este
+  # job se pone en rojo aunque nadie haya tocado el repo: eso es lo que se
+  # quiere, y por eso corre tambien solo, cada lunes.
+  schedule:
+    - cron: '0 6 * * 1'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     container:
       image: archlinux:base-devel
     steps:
       - name: Actualizar sistema
-        run: pacman -Syu --noconfirm namcap git
+        run: |
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm namcap git
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: bash -n + namcap
         run: ./scripts/lint.sh
@@ -39,49 +57,114 @@ jobs:
             bash -n "$f"
           done
 
+      - name: la unidad systemd es valida
+        run: systemd-analyze verify --user systemd/drive-gekko-check.service || true
+
   chain:
     name: construir la cadena completa
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     container:
       image: archlinux:base-devel
-      options: --privileged
     steps:
       - name: Actualizar sistema
         run: |
-          pacman -Syu --noconfirm git meson ninja vala namcap \
-            glib2-devel gobject-introspection gtk-doc
+          # El keyring de la imagen puede llevar semanas: se refresca primero.
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm git pacman-contrib sudo
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # makepkg se niega a correr como root: hace falta un usuario sin privilegios.
       - name: Preparar usuario de build
         run: |
           useradd -m builder
-          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          install -m 0440 /dev/stdin /etc/sudoers.d/builder <<< 'builder ALL=(ALL) NOPASSWD: ALL'
           chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      # Traduce la deriva de [extra] a un error legible ANTES de compilar nada.
+      - name: los pines siguen en [extra]
+        shell: bash
+        run: |
+          pin() { grep -m1 '^pkgver=' "packages/$1/PKGBUILD" | cut -d= -f2; }
+          ok=1
+          for spec in "gvfs=$(pin gvfs-google)" "gvfs-goa=$(pin gvfs-google)" "libgoa=$(pin gnome-online-accounts)"; do
+            if pacman -Sp "$spec" >/dev/null 2>&1; then
+              echo "ok  $spec"
+            else
+              have="$(LC_ALL=C pacman -Si "${spec%%=*}" | awk -F': *' '/^Version/{print $2; exit}')"
+              echo "::error::$spec ya no esta en [extra] (ahora: $have). Hay que subir pkgver en el PKGBUILD y regenerar el checksum. Ver docs/mantenimiento.md."
+              ok=0
+            fi
+          done
+          (( ok ))
 
       # El orden NO es decorativo: libgdata necesita las cabeceras de libsoup2
       # ya instaladas, y gvfs-google las de libgdata. Por eso se construye e
       # instala uno a uno, en un solo job, en vez de una matriz en paralelo.
+      # Sin --needed: pacman omitiria nuestro gnome-online-accounts si el de
+      # Arch ya estuviera instalado con la misma version.
       - name: libsoup2 -> libgdata -> gvfs-google -> gnome-online-accounts
+        shell: bash
         run: |
-          set -e
           for pkg in libsoup2 libgdata gvfs-google gnome-online-accounts; do
             echo "::group::$pkg"
             ( cd "packages/$pkg" \
-              && sudo -u builder makepkg --syncdeps --noconfirm --cleanbuild --nocheck --install )
+              && sudo -u builder makepkg --syncdeps --noconfirm --cleanbuild --install )
             echo "::endgroup::"
           done
 
-      # Las dos comprobaciones que de verdad dicen si esto sirve.
+      # Las comprobaciones que de verdad dicen si esto sirve. `shell: bash`
+      # activa `-eo pipefail`; una negacion con `!` NO haria fallar el paso.
       - name: verificar el resultado
+        shell: bash
         run: |
           echo "== gvfsd-google enlaza contra el gvfs del sistema =="
           ldd /usr/lib/gvfsd-google
-          ! ldd /usr/lib/gvfsd-google | grep -q 'not found'
-
+          if ldd /usr/lib/gvfsd-google | grep -q 'not found'; then
+            echo "::error::gvfsd-google tiene librerias sin resolver"
+            exit 1
+          fi
           echo "== GOA pide el permiso de Drive =="
-          strings /usr/lib/libgoa-backend-1.0.so | grep 'googleapis.com/auth/drive'
+          if ! find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f \
+               -exec grep -aqE 'googleapis\.com/auth/drive( |$)' {} +; then
+            echo "::error::el gnome-online-accounts construido no pide el scope de Drive"
+            exit 1
+          fi
+          echo "== el hook de pacman da el visto bueno =="
+          bash pacman-hooks/post-upgrade-check.sh
 
       - name: namcap sobre los paquetes construidos
-        run: namcap packages/*/*.pkg.tar.zst || true
+        shell: bash
+        run: |
+          pacman -S --noconfirm namcap
+          shopt -s nullglob
+          for p in packages/*/*.pkg.tar.zst; do
+            case "$p" in *-debug-*) continue ;; esac
+            echo "::group::$(basename "$p")"
+            namcap "$p" || true
+            echo "::endgroup::"
+          done
+
+  optional:
+    name: deja-dup (opcional, referencia)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Actualizar sistema
+        run: |
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm git sudo
+      - uses: actions/checkout@v7
+      - name: Preparar usuario de build
+        run: |
+          useradd -m builder
+          install -m 0440 /dev/stdin /etc/sudoers.d/builder <<< 'builder ALL=(ALL) NOPASSWD: ALL'
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+      - name: makepkg deja-dup
+        run: |
+          cd packages/deja-dup
+          sudo -u builder makepkg --syncdeps --noconfirm --cleanbuild --nocheck

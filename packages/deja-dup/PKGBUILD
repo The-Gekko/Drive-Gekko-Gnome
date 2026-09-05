@@ -14,7 +14,10 @@
 # build-all.sh NO lo construye por defecto: usa --with-optional.
 # ############################################################################
 #
-# Origen de la receta: packages/d/deja-dup/package.yml (Solus) -> PKGBUILD (Arch)
+# Origen de la receta: package.yml de deja-dup en Solus (MPL-2.0):
+#   https://github.com/getsolus/packages/blob/main/packages/d/deja-dup/package.yml
+#   autores: Muhammad Alfi Syahrin, Joey Riches; mantenedores: Evan Maddock, Muhammad Alfi Syahrin
+# Opciones de meson alineadas con el PKGBUILD oficial de Arch (0BSD).
 # Upstream: https://gitlab.gnome.org/World/deja-dup
 #
 # Diferencia intencionada con Solus: Solus mueve /etc/xdg a /usr/share/xdg
@@ -68,7 +71,9 @@ source=("${pkgname}-${pkgver}.tar.gz::https://gitlab.gnome.org/World/${pkgname}/
 sha256sums=('997c506c0630b67148a334bf22b9f398bedaf085c32c4c3d5d7f1b3a84d19152')
 
 build() {
-  # Equivalente al `setup:` de Solus: %meson_configure -Denable_restic=true
+  # Solus pasa -Denable_restic=true; en deja-dup 50 restic ya es el motor por
+  # defecto y Arch no pasa esa opcion. Se sigue a Arch: -D packagekit=disabled
+  # evita arrastrar packagekit solo para el boton "instalar duplicity".
   meson setup "${pkgname}-${pkgver}" build \
     --prefix=/usr \
     --libexecdir=/usr/lib \
@@ -78,7 +83,7 @@ build() {
     --wrap-mode=nodownload \
     -D b_lto=true \
     -D b_pie=true \
-    -D enable_restic=true
+    -D packagekit=disabled
 
   meson compile -C build
 }

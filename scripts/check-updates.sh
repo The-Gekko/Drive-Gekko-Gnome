@@ -30,7 +30,8 @@ local_ver() {
 }
 
 gnome_latest() {
-  curl -fsSL "https://download.gnome.org/sources/$1/cache.json" | python3 -c '
+  # Sin red o con la URL cambiada: imprime '?' en vez de un traceback.
+  curl -fsSL --max-time 30 "https://download.gnome.org/sources/$1/cache.json" 2>/dev/null | python3 -c '
 import json, sys
 
 mod = sys.argv[1]
@@ -61,12 +62,12 @@ def key(v):
     return out
 
 print(sorted(versions, key=key)[-1])
-' "$1"
+' "$1" 2>/dev/null || echo "?"
 }
 
 gitlab_latest() {
   # $1 = proyecto url-encoded, p.ej. World%2Fdeja-dup
-  curl -fsSL "https://gitlab.gnome.org/api/v4/projects/$1/repository/tags?per_page=20" \
+  curl -fsSL --max-time 30 "https://gitlab.gnome.org/api/v4/projects/$1/repository/tags?per_page=20" 2>/dev/null \
     | python3 -c '
 import json, sys, re
 tags = json.load(sys.stdin)
@@ -74,7 +75,7 @@ def key(name):
     return [int(x) for x in re.findall(r"\d+", name)] or [0]
 names = [t["name"].lstrip("v") for t in tags if re.match(r"^v?\d", t["name"])]
 print(sorted(names, key=key)[-1] if names else "?")
-'
+' 2>/dev/null || echo "?"
 }
 
 report() {
@@ -89,7 +90,7 @@ report() {
 # libsoup: upstream publica la serie 3.x, que NO sirve aqui (libgdata necesita
 # la 2.4). Solo cuenta como novedad un 2.74.x nuevo.
 gnome_latest_series() {
-  curl -fsSL "https://download.gnome.org/sources/$1/cache.json" | python3 -c '
+  curl -fsSL --max-time 30 "https://download.gnome.org/sources/$1/cache.json" 2>/dev/null | python3 -c '
 import json, sys, re
 mod, pref = sys.argv[1], sys.argv[2]
 data = json.load(sys.stdin)
@@ -105,13 +106,13 @@ if not versions:
     print("?"); sys.exit(0)
 key = lambda v: [int(x) if x.isdigit() else 0 for x in v.split(".")]
 print(sorted(versions, key=key)[-1])
-' "$1" "$2"
+' "$1" "$2" 2>/dev/null || echo "?"
 }
 
 # gvfs-google NO sigue a GNOME: sigue al gvfs de [extra], porque enlaza contra
 # su libgvfscommon.so. Comparar con la ultima de GNOME solo genera ruido.
 arch_repo_ver() {
-  pacman -Si "$1" 2>/dev/null | awk -F': +' '/^(Versi|Version)/{print $2; exit}' | cut -d- -f1
+  LC_ALL=C pacman -Si "$1" 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || echo "?"
 }
 
 printf '%-12s %-10s %s\n' "PAQUETE" "LOCAL" "ESTADO"
@@ -133,8 +134,10 @@ report deja-dup    "$(local_ver deja-dup)"    "$(gitlab_latest 'World%2Fdeja-dup
 gvfs_pin_check() {
   local pin repo_v inst_v
   pin="$(local_ver gvfs-google)"
-  repo_v="$(pacman -Si gvfs 2>/dev/null | awk -F': +' '/^(Versi|Version)/{print $2; exit}' | cut -d- -f1)"
-  inst_v="$(pacman -Q gvfs 2>/dev/null | awk '{print $2}' | cut -d- -f1)"
+  # LC_ALL=C: la etiqueta es 'Version' en cualquier idioma. `|| true`: con
+  # set -e y pipefail, un pacman que falle mataria el script en silencio.
+  repo_v="$(LC_ALL=C pacman -Si gvfs 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || true)"
+  inst_v="$(pacman -Q gvfs 2>/dev/null | awk '{print $2}' | cut -d- -f1 || true)"
 
   echo
   printf '%-22s %s\n' "pin en gvfs-google:" "${pin:-?}"
@@ -152,7 +155,7 @@ gvfs_pin_check() {
     printf '%s!! ACCION REQUERIDA: Arch tiene gvfs %s y tu pin es %s%s\n' \
       "$C_ERR" "$repo_v" "$pin" "$C_OFF"
     cat <<AVISO
-   Un `pacman -Syu` va a FALLAR con un conflicto de dependencias.
+   Un \`pacman -Syu\` va a FALLAR con un conflicto de dependencias.
    Antes de actualizar el sistema:
      1) edita packages/gvfs-google/PKGBUILD -> pkgver=$repo_v, pkgrel=1
      2) cd packages/gvfs-google && updpkgsums && makepkg -si
@@ -172,7 +175,7 @@ AVISO
 
 google_option_check() {
   local v opts
-  v="$(pacman -Si gvfs 2>/dev/null | awk -F': +' '/^(Versi|Version)/{print $2; exit}' | cut -d- -f1)"
+  v="$(LC_ALL=C pacman -Si gvfs 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || true)"
   [[ -z "$v" ]] && return
 
   opts="$(curl -fsSL --max-time 20 \
@@ -220,11 +223,10 @@ goa_drive_check() {
 
   # `grep -q` cierra la tuberia y con `pipefail` eso cuenta como fallo:
   # por eso se vuelca a una variable antes de buscar.
-  local scopes
-  scopes="$(find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f \
-            -exec strings {} + 2>/dev/null || true)"
-
-  if grep -q 'googleapis.com/auth/drive' <<<"$scopes"; then
+  # grep -a lee el binario sin depender de binutils; el patron exige 'drive'
+  # seguido de espacio o fin de linea (no vale drive.file ni drive.readonly).
+  if find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f \
+       -exec grep -aqE 'googleapis\.com/auth/drive( |$)' {} + 2>/dev/null; then
     printf '%s== GOA pide el scope de Drive: Nautilus puede montar%s\n' "$C_OK" "$C_OFF"
   else
     printf '%s!! GOA YA NO PIDE EL SCOPE DE DRIVE%s\n' "$C_ERR" "$C_OFF"
@@ -232,8 +234,11 @@ goa_drive_check() {
    Arch ha reinstalado su gnome-online-accounts encima del nuestro.
    Google Drive va a fallar con "Permiso denegado".
 
-   Arreglo:
-     cd packages/gnome-online-accounts && makepkg -si
+   Arreglo (docs/mantenimiento.md, Regla n.4):
+     1) pacman -Si gnome-online-accounts        # version que tiene Arch
+     2) packages/gnome-online-accounts/PKGBUILD: mismo pkgver, pkgrel MAYOR
+        que el de Arch, y el b2sum del PKGBUILD oficial de Arch
+     3) cd packages/gnome-online-accounts && makepkg -si
 
    Si tras reinstalar sigue fallando, la cuenta necesita reautorizarse:
    Configuracion -> Cuentas en linea -> quitar y volver a anadir Google.

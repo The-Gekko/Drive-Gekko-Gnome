@@ -1,6 +1,12 @@
 # Maintainer: The-Gekko <thegekko5426@gmail.com>
 # Contributor: Drive-Gekko-Gnome
 #
+# Esta receta sigue al paquete `libsoup` de Arch (heftig; PKGBUILD bajo 0BSD):
+#   https://gitlab.archlinux.org/archlinux/packaging/packages/libsoup
+# NO sigue la de Solus, que compila el tarball 2.74.3 sin parches:
+#   https://github.com/getsolus/packages/blob/main/packages/l/libsoup/package.yml
+# Los commits que se aplican son de la rama de mantenimiento de GNOME, recogidos por Arch.
+#
 # ############################################################################
 # POR QUE ESTE PAQUETE EXISTE AQUI
 #
@@ -11,9 +17,9 @@
 # DE DONDE SALE EL CODIGO Y LOS PARCHES
 #
 # Se clona el repositorio oficial de GNOME en el tag 2.74.3 y ENCIMA se aplican
-# los 17 commits posteriores de la rama de mantenimiento, tal y como hace el
-# paquete `libsoup` de Arch (mantenido por heftig). Esos commits corrigen
-# vulnerabilidades reales, entre otras:
+# los 17 commits posteriores de la rama de mantenimiento (9 de ellos de
+# seguridad; el resto son arreglos de build y traducciones), tal y como hace el
+# paquete `libsoup` de Arch (mantenido por heftig). Entre los de seguridad:
 #
 #   Fix heap buffer overflow in soup_content_sniffer_sniff
 #   Fix heap buffer overflow in soup-content-sniffer.c:sniff_feed_or_html()
@@ -36,7 +42,7 @@ pkgname=libsoup2
 _pkgname=libsoup
 pkgver=2.74.3
 pkgrel=2
-pkgdesc='Libreria HTTP cliente/servidor de GNOME (serie 2.4, con parches de CVE de la rama de mantenimiento)'
+pkgdesc='Libreria HTTP de GNOME, serie 2.4, con los parches de seguridad de la rama'
 arch=('x86_64')
 url='https://libsoup.gnome.org/'
 license=('LGPL-2.0-or-later')
@@ -92,6 +98,9 @@ build() {
   #   tls_check=false  evita que meson falle comprobando el backend TLS
   #   tests=false      evita arrastrar apache/php como checkdepends
   #   gtk_doc=false    la documentacion no aporta nada en un paquete binario
+  #   ntlm=disabled    Arch lo deja en 'auto' y arrastra samba como makedepend;
+  #                    aqui libsoup solo sirve a libgdata -> Google, NTLM sobra.
+  #                    Se apaga EXPLICITAMENTE para que no quede en silencio.
   # Para ver todas las opciones de esta version: meson configure build
   meson setup "${_pkgname}" build \
     --prefix=/usr \
@@ -103,7 +112,8 @@ build() {
     -D b_pie=true \
     -D tls_check=false \
     -D tests=false \
-    -D gtk_doc=false
+    -D gtk_doc=false \
+    -D ntlm=disabled
 
   meson compile -C build
 }

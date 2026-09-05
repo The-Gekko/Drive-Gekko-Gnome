@@ -16,9 +16,11 @@
 [Trigger]
 Operation = Install
 Operation = Upgrade
+Operation = Remove
 Type = Package
 Target = gnome-online-accounts
 Target = gvfs
+Target = gvfs-google
 
 [Action]
 Description = Drive-Gekko-Gnome: comprobando el acceso a Google Drive...

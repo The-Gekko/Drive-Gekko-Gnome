@@ -1,18 +1,24 @@
 # Maintainer: The-Gekko <thegekko5426@gmail.com>
 # Contributor: Drive-Gekko-Gnome
 #
+# Opciones de meson contrastadas con la receta de Solus (MPL-2.0):
+#   https://github.com/getsolus/packages/blob/main/packages/l/libgdata/package.yml
+#   Diferencia deliberada: -D oauth1=disabled (Solus: enabled). Ver docs/solus-vs-arch.md.
+#
 # ############################################################################
 # POR QUE ESTE PAQUETE EXISTE AQUI
 #
 # - Upstream ARCHIVADO: https://gitlab.gnome.org/Archive/libgdata
-#   Sin mantenedor desde hace ~4 anos. GNOME lo archivo oficialmente.
-# - RETIRADO de los repos oficiales de Arch (mayo 2026).
-# - La version del AUR fue una de las comprometidas en el incidente
-#   "Atomic Arch" (11-12 junio 2026). NO usar el AUR ni repos que lo
-#   reconstruyan automaticamente para este paquete.
+#   Ultima release 0.18.1 (2021); ultimo commit mayo de 2025. GNOME lo archivo.
+# - RETIRADO de los repos oficiales de Arch (mayo 2026). Sigue en el AUR con el
+#   PKGBUILD de Arch integro (ultimo commit: heftig, 2026-02-28).
+# - Figura en la lista consolidada del incidente "Atomic Arch" (junio 2026)
+#   por haber sido ADOPTADO en esa ventana, pero su git del AUR no tiene ningun
+#   commit dentro de ella. No hay motivo para desconfiar del AUR aqui.
 #
 # Aqui se construye desde el tarball oficial de download.gnome.org con
-# checksum fijado, que es la unica cadena de confianza que queda.
+# checksum fijado para tener UNA sola cadena de confianza, auditable en este
+# repo, no porque el AUR este comprometido.
 #
 # El unico motivo para instalarlo es gvfsd-google (Google Drive en Nautilus).
 # Si no necesitas eso, no instales esto. Ver docs/estado-upstream.md.
@@ -30,23 +36,24 @@ depends=(
   'glib2'
   'glibc'
   'json-glib'
+  'libgcc'           # libgdata.so enlaza libgcc_s.so.1
   'libgoa'           # goa-1.0
   'libsoup-2.4.so'   # lo provee el paquete libsoup2 de este mismo repo
   'libxml2'
 )
 makedepends=(
   'gobject-introspection'
-  'gtk-doc'
-  'gtk3'
   'meson'
   'ninja'
   'vala'
 )
+# gtk3 solo compila la demo 'scrapbook' (que no se instala) y gtk-doc solo la
+# documentacion: ambas se apagan abajo en vez de arrastrarlas como makedepends.
 provides=('libgdata.so')
 options=('!emptydirs')
 source=("https://download.gnome.org/sources/${pkgname}/${pkgver%.*}/${pkgname}-${pkgver}.tar.xz")
-# Checksum tomado del package.yml de Solus y usado como contraste cruzado.
-# Verificalo igualmente contra el .sha256sum publicado por GNOME:
+# sha256 del .sha256sum de GNOME; coincide con el package.yml de Solus
+# (contraste cruzado). Verificalo contra el fichero publicado por GNOME:
 #   https://download.gnome.org/sources/libgdata/0.18/libgdata-0.18.1.sha256sum
 sha256sums=('dd8592eeb6512ad0a8cf5c8be8c72e76f74bfe6b23e4dd93f0756ee0716804c7')
 
@@ -65,6 +72,7 @@ build() {
     -D b_lto=true \
     -D b_pie=true \
     -D always_build_tests=false \
+    -D gtk=disabled \
     -D gtk_doc=false \
     -D oauth1=disabled
 

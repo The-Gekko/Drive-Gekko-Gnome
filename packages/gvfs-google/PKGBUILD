@@ -17,9 +17,10 @@
 #   /usr/lib/gvfsd-google
 #   /usr/share/gvfs/mounts/google.mount
 #
-# CONSECUENCIA IMPORTANTE: gvfsd-google enlaza contra la libgvfscommon.so que
-# instala el `gvfs` del sistema, y esa libreria NO tiene version en el soname.
-# Por eso `depends` fija gvfs a la MISMA pkgver. Cada vez que Arch suba gvfs,
+# CONSECUENCIA IMPORTANTE: gvfsd-google enlaza contra libgvfscommon.so y
+# libgvfsdaemon.so, que instala el `gvfs` del sistema en /usr/lib/gvfs/, y
+# NINGUNA de las dos lleva version en el soname. Por eso `depends` fija gvfs a
+# la MISMA pkgver. Cada vez que Arch suba gvfs,
 # hay que subir pkgver aqui y reconstruir, o el backend dejara de arrancar.
 # Ver docs/mantenimiento.md.
 # ############################################################################
@@ -44,10 +45,20 @@ optdepends=(
   'gnome-control-center: anadir la cuenta de Google desde la interfaz de GOA'
   'nautilus: navegar la unidad montada'
 )
+makedepends=(
+  'glib2-devel'          # gdbus-codegen y glib-mkenums
+  'meson'                # trae ninja y python
+)
 options=('!emptydirs')
 source=("https://download.gnome.org/sources/${_pkgbase}/${pkgver%.*}/${_pkgbase}-${pkgver}.tar.xz")
-# Contrastado con el package.yml de gvfs en el monorepo de Solus. Verificalo
-# tambien contra https://download.gnome.org/sources/gvfs/1.60/gvfs-1.60.2.sha256sum
+# Opciones -D google=true y -D privileged_group=wheel contrastadas con la
+# receta de Solus (MPL-2.0):
+#   https://github.com/getsolus/packages/blob/main/packages/g/gvfs/package.yml
+#   Solus reactivo -Dgoogle=true en gvfs 1.60.0 a proposito, cuando upstream lo
+#   apago: Joey Riches, 2026-03-21, commit d78e428c5e4a1efb7591a98a48ebf1ec188aa775
+# El diseno de este paquete (solo 2 ficheros, sin sustituir gvfs) es propio.
+# sha256 del .sha256sum de GNOME (coincide con Solus):
+#   https://download.gnome.org/sources/gvfs/1.60/gvfs-1.60.2.sha256sum
 sha256sums=('a8d7744615a488a559302fe0cc8f418d5b44aba3c2ba2163e5a9e6f607c1be9a')
 
 build() {
