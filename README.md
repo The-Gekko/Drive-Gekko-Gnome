@@ -71,6 +71,21 @@ nuevo de Arch.
 > token en `/etc/drive-gekko-gnome.token`, ya no sirve para nada:
 > `sudo rm /etc/drive-gekko-gnome.token`.
 
+### Si usas `gekko`
+
+Con [`gekko`](https://github.com/The-Gekko) instalado en el sistema
+(`/usr/local/bin/gekko`), las notificaciones de este proyecto dejan de mandarte
+a la documentación y nombran un solo comando:
+
+```bash
+gekko drive        # estado, reconstruir e instalar, recolocar el repo, ver el registro
+gekko drive u      # reconstruir e instalar, sin menú
+```
+
+En el menú de `gekko` aparece **Google Drive (GNOME)** cuando este proyecto está
+instalado, y una entrada extra **⚠ Reactivar Google Drive** solo cuando hay algo
+que arreglar.
+
 <details>
 <summary>Solo el bloque de pacman.conf, a mano</summary>
 

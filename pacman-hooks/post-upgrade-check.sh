@@ -47,6 +47,20 @@ notificar() {
   done
 }
 
+# Que hacer, en una linea, para meterlo en la notificacion.
+#
+# Si gekko esta instalado en el sistema, un comando corto vale mas que dos
+# largos. Solo se miran rutas del sistema a proposito: esto tambien corre como
+# root desde el hook de pacman, donde el ~/.local/bin del usuario no existe en
+# el PATH (si lo tienes ahi: sudo install -m755 gekko /usr/local/bin/gekko).
+comando_arreglo() {
+  if [[ -x /usr/local/bin/gekko || -x /usr/bin/gekko ]]; then
+    printf 'Abre una terminal y ejecuta:  gekko drive'
+  else
+    printf '%s' "$1"
+  fi
+}
+
 # ¿Pide GOA el scope de Drive? Se busca 'auth/drive' seguido de espacio o fin
 # de linea, para no dar por bueno un scope parcial (drive.file, drive.readonly).
 goa_pide_drive() {
@@ -65,7 +79,8 @@ if [[ -n "$_pos_repo" && -n "$_pos_extra" && "$_pos_repo" -gt "$_pos_extra" ]]; 
   printf '  pacman elige el primer repo que tenga el nombre: instalara el GOA de Arch\n'
   printf '  (sin permiso de Drive) en la proxima actualizacion. Arreglo:\n'
   printf '    sudo <repo>/scripts/add-repo.sh --local <repo>/out   (lo recoloca)\n\n'
-  notificar "El repositorio de Drive esta en mal sitio" "En /etc/pacman.conf, [drive-gekko-gnome] debe ir ANTES de [core] y [extra]."
+  notificar "El repositorio de Drive esta en mal sitio" \
+    "En /etc/pacman.conf, [drive-gekko-gnome] debe ir ANTES de [core] y [extra]. $(comando_arreglo 'Ejecuta: sudo <clon>/scripts/add-repo.sh --local <clon>/out')"
   ROTO=1
 fi
 
@@ -99,7 +114,7 @@ if ! goa_pide_drive; then
   printf '    sudo pacman -Syu                                (instala desde el repo local)\n'
   printf '    Si aun no hay receta nueva, el bot no ha corrido: docs/automatizacion.md%s\n\n' "$O"
   notificar "Google Drive ha dejado de funcionar" \
-    "Arch ha reinstalado gnome-online-accounts y se perdio el permiso de Drive. Reconstruye el paquete del repo Drive-Gekko-Gnome (docs/mantenimiento.md, Regla 4)."
+    "Arch ha reinstalado gnome-online-accounts y se perdio el permiso de Drive. $(comando_arreglo 'Ejecuta: sudo systemctl start drive-gekko-repo.service && sudo pacman -Syu')"
   ROTO=1
 fi
 
@@ -119,7 +134,7 @@ if [[ -n "$_pin" && -n "$_gvfs" && "$_pin" != "$_gvfs" ]]; then
   printf '  Arreglo: sudo systemctl start drive-gekko-repo.service && sudo pacman -Syu\n'
   printf '  (si el bot aun no ha subido la receta para gvfs %s, espera o lanzalo en Actions)\n\n' "$_gvfs"
   notificar "Google Drive necesita reconstruirse" \
-    "gvfs paso a la version ${_gvfs} y gvfs-google esta fijado a ${_pin}. Reconstruyelo antes de usar Drive."
+    "gvfs paso a la version ${_gvfs} y gvfs-google esta fijado a ${_pin}. $(comando_arreglo 'Ejecuta: sudo systemctl start drive-gekko-repo.service && sudo pacman -Syu')"
   ROTO=1
 fi
 
@@ -130,7 +145,8 @@ if [[ -x /usr/lib/gvfsd-google ]] && ldd /usr/lib/gvfsd-google 2>/dev/null | gre
   printf '%s  Drive-Gekko-Gnome: gvfsd-google tiene librerias sin resolver:%s\n' "$R" "$O"
   ldd /usr/lib/gvfsd-google | grep 'not found' | sed 's/^/    /'
   printf '\n'
-  notificar "Google Drive esta roto" "gvfsd-google ya no encuentra sus librerias. Reconstruye gvfs-google."
+  notificar "Google Drive esta roto" \
+    "gvfsd-google ya no encuentra sus librerias. $(comando_arreglo 'Ejecuta: sudo systemctl start drive-gekko-repo.service && sudo pacman -Syu')"
   ROTO=1
 fi
 
