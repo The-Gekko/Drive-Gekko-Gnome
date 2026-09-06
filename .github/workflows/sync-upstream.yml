@@ -101,6 +101,16 @@ jobs:
 
       # Hay un bump -> construir la cadena entera y verificarla. Si falla,
       # issue y NADA se pushea.
+      #
+      # Los tres como builder, no solo el primero: out/ es suyo, y a
+      # publish-repo.sh lo lanza local-repo.sh con as_user en una maquina de
+      # verdad, asi que como root el CI ejercitaba una rama que no usa nadie.
+      # Ademas, mientras leyo el pkgver con `makepkg --printsrcinfo`, makepkg
+      # salia con E_ROOT=10 y pipefail mataba el paso mudo. Como lleva
+      # continue-on-error el bot lo interpretaba como "el bump no construye":
+      # abria ese issue en cada vuelta -diagnostico falso, la cadena construia
+      # perfectamente- y no llegaba nunca ni al push a main ni al PR. O sea que
+      # el mecanismo que mantiene al dia el pin gvfs= no publicaba nada.
       - name: construir e instalar la cadena
         id: build
         if: steps.sync.outputs.CODE == '11' || (steps.sync.outputs.CODE == '10' && steps.pr.outputs.open == '')
@@ -108,8 +118,8 @@ jobs:
         continue-on-error: true
         run: |
           sudo -u builder env HOME=/home/builder ./scripts/build-all.sh --install
-          ./scripts/verify-chain.sh
-          ./scripts/publish-repo.sh --check
+          sudo -u builder env HOME=/home/builder ./scripts/verify-chain.sh
+          sudo -u builder env HOME=/home/builder ./scripts/publish-repo.sh --check
 
       - name: abrir issue (el bump no construye)
         if: steps.build.outcome == 'failure'

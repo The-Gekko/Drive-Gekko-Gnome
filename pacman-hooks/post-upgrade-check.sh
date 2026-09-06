@@ -16,6 +16,25 @@ R=$'\033[1;31m'; Y=$'\033[1;33m'; G=$'\033[1;32m'; O=$'\033[0m'
 ROTO=0
 
 # ---------------------------------------------------------------------------
+# Contrato de salida: por defecto 0, detecte lo que detecte.
+#
+# Esto lo lanza un hook PostTransaction, y un codigo distinto de cero solo
+# consigue que pacman remate cada actualizacion con "command failed to execute
+# correctly" sin decir por que; el aviso ya sale por stdout y por notificacion.
+# Con ESTRICTO=1 si devuelve 1 cuando algo esta roto: es lo que hace falta para
+# que el CI (build.yml) lo use como una comprobacion de verdad y no de adorno.
+# Las DOS salidas del script pasan por aqui.
+#
+# Antes de poner ese ESTRICTO=1 en build.yml: el contenedor del CI no tiene
+# llavero, asi que la comprobacion 4 lo dejaria en rojo hasta que
+# scripts/ci-prepare.sh instale gnome-keyring.
+# ---------------------------------------------------------------------------
+salir() {
+  (( ROTO )) && [[ "${ESTRICTO:-0}" == 1 ]] && exit 1
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
 # Aviso en el escritorio.
 #
 # La salida de un hook de pacman se pierde entre las 200 lineas de un -Syu
@@ -63,9 +82,19 @@ comando_arreglo() {
 
 # ¿Pide GOA el scope de Drive? Se busca 'auth/drive' seguido de espacio o fin
 # de linea, para no dar por bueno un scope parcial (drive.file, drive.readonly).
+#
+# El find se guarda en una variable en vez de encadenar '-exec ... {} +': con
+# esa forma, si el -name no casa con nada grep no llega a ejecutarse y find sale
+# con 0, o sea que "no hay libreria" se leeria como "si pide Drive", justo al
+# reves. Y no es un caso de laboratorio: gvfs-google depende de libgoa, no de
+# gnome-online-accounts, asi que quitar GOA dejando el resto es un estado que
+# pacman permite -- el mismo que este hook vigila con su Operation = Remove.
+# Mismo patron que scripts/verify-chain.sh.
 goa_pide_drive() {
-  find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f \
-    -exec grep -aqE 'googleapis\.com/auth/drive( |$)' {} + 2>/dev/null
+  local _goa
+  _goa="$(find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f 2>/dev/null | head -1)"
+  [[ -n "$_goa" ]] || return 1
+  grep -aqE 'googleapis\.com/auth/drive( |$)' "$_goa" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -85,6 +114,36 @@ if [[ -n "$_pos_repo" && -n "$_pos_extra" && "$_pos_repo" -gt "$_pos_extra" ]]; 
 fi
 
 # ---------------------------------------------------------------------------
+# 0b. Y tiene que apuntar a un sitio que exista
+#
+# El Server es la ruta ABSOLUTA del clon, grabada una sola vez por add-repo.sh.
+# Si mueves o renombras el clon, ese file:// deja de resolver y falla TODO
+# 'pacman -Sy' de la maquina, no solo lo de Drive. Nadie mas lo caza: sin
+# transaccion no hay hook, asi que el unico que llega aqui es
+# drive-gekko-check.service en el siguiente inicio de sesion.
+# ---------------------------------------------------------------------------
+_srv="$(pacman-conf --repo=drive-gekko-gnome Server 2>/dev/null | head -1)"
+# url_ruta() de add-repo.sh no escapa solo el espacio: tambien %, la barra
+# invertida, # y ?. Hay que deshacer LOS CINCO porque este aviso es ROJO y sale
+# con notificacion: quedandose en %20, un clon en "50%", en "a#b" o en
+# "nota\ueva" disparaba la alarma con el repositorio perfectamente puesto. El
+# %25 va el ultimo: si no, una carpeta llamada "a%20b" se leeria como "a b".
+_dir="${_srv#file://}"
+_dir="${_dir//%20/ }"; _dir="${_dir//%23/#}"; _dir="${_dir//%3F/\?}"
+_dir="${_dir//%5C/\\}"; _dir="${_dir//%25/%}"
+if [[ -n "$_srv" && "$_srv" == file://* && ! -r "${_dir}/drive-gekko-gnome.db" ]]; then
+  printf '%s  Drive-Gekko-Gnome: el repositorio de pacman apunta a la nada%s\n\n' "$R" "$O"
+  printf '    Server = %s\n\n' "$_srv"
+  printf '  Ahi no hay drive-gekko-gnome.db, asi que cualquier "pacman -Sy" de esta\n'
+  printf '  maquina falla entero. Si has movido el clon hay que corregir DOS sitios:\n'
+  printf '    sudo <clon>/scripts/add-repo.sh --local <clon>/out   (/etc/pacman.conf)\n'
+  printf '    REPO= en /etc/drive-gekko-gnome.conf                 (el temporizador)\n\n'
+  notificar "El repositorio de Drive no existe" \
+    "pacman busca la base de datos en ${_dir} y ahi no hay nada: hasta que se arregle no se puede actualizar la maquina. Si has movido el clon, ejecuta sudo <clon>/scripts/add-repo.sh --local <clon>/out y corrige REPO= en /etc/drive-gekko-gnome.conf"
+  ROTO=1
+fi
+
+# ---------------------------------------------------------------------------
 # 0. Si gvfs-google no esta instalado, esto no incumbe al usuario... salvo que
 #    acabe de quitarlo dejando nuestro GOA puesto: entonces un recordatorio.
 # ---------------------------------------------------------------------------
@@ -94,7 +153,7 @@ if ! pacman -Qq gvfs-google >/dev/null 2>&1; then
     printf '  de este repo sigue puesto. Si has quitado gvfs-google para desbloquear una\n'
     printf '  actualizacion de gvfs, reconstruyelo con el pkgver nuevo cuando termines.%s\n' "$O"
   fi
-  exit $(( ROTO ? 0 : 0 ))
+  salir
 fi
 
 # ---------------------------------------------------------------------------
@@ -150,8 +209,36 @@ if [[ -x /usr/lib/gvfsd-google ]] && ldd /usr/lib/gvfsd-google 2>/dev/null | gre
   ROTO=1
 fi
 
+# ---------------------------------------------------------------------------
+# 4. Hay donde guardar el token de la cuenta
+#
+# GOA guarda las credenciales con libsecret contra org.freedesktop.secrets, y en
+# Arch ese servicio lo aporta gnome-keyring, al que NADIE arrastra como
+# dependencia (ni gnome-session). Sin el, las tres comprobaciones de arriba pasan
+# y aun asi la cuenta de Google no se puede dar de alta: GOA responde "Failed to
+# store credentials in the keyring" y Drive no monta jamas. Se mira el .service
+# de D-Bus y no el bus de sesion porque esto corre como root desde el hook.
+#
+# Se pasa el DIRECTORIO con -r --include y no un glob 'dir/*.service': si el
+# glob no casa, bash deja el patron literal y grep se pone a leer la ENTRADA
+# ESTANDAR, o sea que el hook colgaria la transaccion de pacman entera. El
+# --include ademas descarta un org.freedesktop.secrets.service.pacsave olvidado,
+# que declara el Name pero no lo sirve.
+# ---------------------------------------------------------------------------
+if ! grep -rqsE '^Name[[:space:]]*=[[:space:]]*org\.freedesktop\.secrets' \
+       --include='*.service' /usr/share/dbus-1/services/; then
+  printf '%s  Drive-Gekko-Gnome: no hay donde guardar el token de la cuenta%s\n\n' "$Y" "$O"
+  printf '  Falta un proveedor de org.freedesktop.secrets (el llavero). La cadena esta\n'
+  printf '  entera, pero al anadir la cuenta de Google, GOA respondera "Failed to store\n'
+  printf '  credentials in the keyring" y la unidad no llegara a montarse. Arreglo:\n'
+  printf '    sudo pacman -S --needed gnome-keyring\n\n'
+  notificar "Google Drive no puede guardar la sesion" \
+    "Falta el llavero (org.freedesktop.secrets): sin el no se puede anadir la cuenta de Google. Ejecuta: sudo pacman -S --needed gnome-keyring"
+  ROTO=1
+fi
+
 if (( ROTO == 0 )); then
   printf '%s  Drive-Gekko-Gnome: Google Drive sigue operativo.%s\n' "$G" "$O"
 fi
 
-exit 0
+salir

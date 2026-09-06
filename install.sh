@@ -19,8 +19,8 @@
 # GitHub Actions mantiene las RECETAS; el temporizador de esta maquina las trae
 # (el repo es publico: `git pull` sin credencial) y las construye.
 #
-# NO ejecutar como root: makepkg lo rechaza. Pide sudo al principio (y quiza
-# otra vez despues de compilar, si tarda mas que el timeout de sudo).
+# NO ejecutar como root: makepkg lo rechaza. Pide sudo al principio y mantiene
+# viva la credencial mientras compila, para no interrumpirte a mitad.
 
 set -euo pipefail
 
@@ -36,14 +36,25 @@ ok()   { printf '%s  ok%s %s\n' "$G" "$O" "$*"; }
 warn() { printf '%s /!\\%s %s\n' "$Y" "$O" "$*" >&2; }
 die()  { printf '%serror%s %s\n' "$R" "$O" "$*" >&2; exit 1; }
 
-MAKEDEPS=(git glib2-devel gobject-introspection meson ninja vala)
+# base-devel esta aqui por fakeroot y debugedit: makepkg los exige y no los
+# arrastra nadie mas (/usr/bin/makepkg lo pone el paquete 'pacman', no
+# base-devel), asi que sin el la construccion muere en seco con "Cannot find
+# the fakeroot binary." antes de compilar una sola linea. Y gcr es la serie 3,
+# la que pide libgdata (meson.build:119, gcr-base-3): en la pila de GNOME solo
+# lo arrastra gnome-keyring, asi que un GNOME montado a mano no lo tiene y
+# meson corta con 'Dependency "gcr-base-3" not found'.
+MAKEDEPS=(base-devel git glib2-devel gobject-introspection meson ninja vala gcr)
 
 # ---------------------------------------------------------------------------
 # Comprobaciones previas: mejor parar aqui que a los veinte minutos.
 # ---------------------------------------------------------------------------
 [[ $EUID -eq 0 ]] && die "no ejecutes esto como root; se pedira sudo cuando haga falta"
 command -v sudo    >/dev/null || die "falta sudo"
-command -v makepkg >/dev/null || die "falta el grupo base-devel:  sudo pacman -S base-devel"
+# Comprobar makepkg no vale de nada: lo instala el paquete 'pacman', asi que la
+# condicion se cumple en cualquier Arch. Lo que de verdad falta sin base-devel
+# (que hoy es metapaquete, no grupo) es fakeroot; y como el paso 1 lo instala,
+# esto es un aviso, no un motivo para parar.
+command -v fakeroot >/dev/null || warn "no tienes base-devel (falta fakeroot); el paso 1 lo instalara"
 command -v git     >/dev/null || die "falta git:  sudo pacman -S git"
 [[ "$ROOT" == "$HOME"/* ]] || warn "el repo no esta en tu HOME; el temporizador construira como '$ME' en $ROOT"
 
@@ -58,6 +69,19 @@ fi
 info "pidiendo sudo"
 sudo -v || die "sin sudo no se puede instalar nada"
 
+# El paso 3 tarda mas que el timeout de sudo, y sin esto el paso 4 vuelve a
+# pedir la contrasena a media instalacion. `sudo -n -v` renueva la credencial
+# sin ejecutar ningun mandato y sin preguntar jamas; si no puede (sudoers sin
+# cache) el bucle muere solo, y no arrastra al script porque va en la condicion
+# del while. Todo va a /dev/null por dos motivos: sudo se queja por stderr
+# cuando no puede renovar, y sobre todo porque el `sleep` sobrevive huerfano
+# hasta 50 s al kill del trap -si conservara la stdout del script, un
+# `./install.sh | tee registro.txt` se quedaria colgado ese rato despues de
+# haber terminado-.
+( while sudo -n -v && kill -0 "$$"; do sleep 50; done ) >/dev/null 2>&1 &
+SUDO_KEEP=$!
+trap 'kill "$SUDO_KEEP" 2>/dev/null || true' EXIT
+
 # ---------------------------------------------------------------------------
 # 1. Herramientas. -Syu y no -Sy: en Arch instalar sin actualizar es una
 #    actualizacion parcial. Se pide confirmacion: es TU sistema.
@@ -67,17 +91,19 @@ sudo pacman -Syu --needed "${MAKEDEPS[@]}"
 ok "listas"
 
 # ---------------------------------------------------------------------------
-# 2. Ficheros del sistema: el actualizador local, el hook y las unidades.
+# 2. Ficheros del sistema: el actualizador local y las unidades. El paso 3
+#    ejecuta local-repo.sh desde LIB_DIR, asi que tiene que estar puesto
+#    antes. El hook de pacman no: se arma al final (paso 6), cuando ya hay
+#    cadena que vigilar.
 # ---------------------------------------------------------------------------
-info "instalando el actualizador local y el hook de pacman"
+info "instalando el actualizador local y las unidades"
 sudo install -Dm755 "${ROOT}/scripts/local-repo.sh"          "${LIB_DIR}/local-repo.sh"
 sudo install -Dm755 "${ROOT}/pacman-hooks/post-upgrade-check.sh" "${LIB_DIR}/post-upgrade-check.sh"
-sudo install -Dm644 "${ROOT}/pacman-hooks/99-drive-gekko-gnome.hook" "${HOOK_DIR}/99-drive-gekko-gnome.hook"
 sudo install -Dm644 "${ROOT}/systemd/drive-gekko-repo.service" "${UNIT_DIR}/drive-gekko-repo.service"
 sudo install -Dm644 "${ROOT}/systemd/drive-gekko-repo.timer"   "${UNIT_DIR}/drive-gekko-repo.timer"
 printf 'REPO=%q\nUSER_=%q\n' "$ROOT" "$ME" | sudo tee /etc/drive-gekko-gnome.conf >/dev/null
 sudo systemctl daemon-reload
-ok "en ${LIB_DIR}, ${HOOK_DIR} y /etc/drive-gekko-gnome.conf"
+ok "en ${LIB_DIR}, ${UNIT_DIR} y /etc/drive-gekko-gnome.conf"
 
 # ---------------------------------------------------------------------------
 # 3. Construir la cadena y dejarla en el repo local out/. local-repo.sh
@@ -101,25 +127,44 @@ sudo "${ROOT}/scripts/add-repo.sh" --local "${ROOT}/out"
 # ---------------------------------------------------------------------------
 info "instalando gvfs-google y gnome-online-accounts desde el repositorio local"
 sudo pacman -Syu gvfs-google gnome-online-accounts \
-  || die "pacman no pudo instalar. Si habla de 'gvfs=X' es que Arch acaba de subir gvfs y la
-      receta aun no la ha seguido el bot: espera al siguiente run (cada 8 h) o
-      lanzalo en GitHub (Actions -> sync-upstream -> Run workflow); luego
-      'git pull' en este clon y repite ./install.sh"
+  || die "pacman no pudo instalar. Hay dos causas frecuentes y su propio error las distingue:
+      - habla de 'gvfs=X': Arch acaba de subir gvfs y la receta aun no la ha
+        seguido el bot. Espera al siguiente run (cada 8 h) o lanzalo en GitHub
+        (Actions -> sync-upstream -> Run workflow); luego 'git pull' en este
+        clon y repite ./install.sh
+      - habla de no poder abrir o leer la base de datos o un fichero del repo
+        ('could not open file', 'no se pudo obtener el archivo'): pacman
+        descarga como el usuario alpm y tu HOME es 0700, asi que no puede
+        entrar a leer ${ROOT}/out. Lo repara volver a ejecutar:
+          sudo ${ROOT}/scripts/add-repo.sh --local ${ROOT}/out
+      Hasta que se arregle, el bloque [drive-gekko-gnome] que ya esta en
+      /etc/pacman.conf hace fallar cualquier 'pacman -Sy' (tambien el paso 1 de
+      este script si lo relanzas). Son cinco lineas seguidas; se quitan con:
+        sudo sed -i '/^# Drive-Gekko-Gnome:/,+4d' /etc/pacman.conf
+      y add-repo.sh dejo al lado una copia previa: /etc/pacman.conf.bak-drive-gekko-*"
 
 info "verificando"
 "${ROOT}/scripts/verify-chain.sh" || die "la cadena instalada no verifica; mira los mensajes de arriba"
 
 # ---------------------------------------------------------------------------
-# 6. Automatismos: temporizador (sistema) y comprobacion de login (usuario).
+# 6. Automatismos: hook de pacman, temporizador (sistema) y comprobacion de
+#    login (usuario). El hook se arma AQUI y no en el paso 2: si algo aborta
+#    antes de llegar hasta aqui, un hook ya puesto dispara post-upgrade-check.sh
+#    en cada 'pacman -S' que toque gvfs o GOA, con notificaciones critical sobre
+#    una cadena que nunca se llego a instalar.
 # ---------------------------------------------------------------------------
-info "activando el temporizador de reconstruccion"
+info "armando el hook de pacman y el temporizador de reconstruccion"
+sudo install -Dm644 "${ROOT}/pacman-hooks/99-drive-gekko-gnome.hook" "${HOOK_DIR}/99-drive-gekko-gnome.hook"
+ok "${HOOK_DIR}/99-drive-gekko-gnome.hook (avisa cuando Arch pise el GOA de este repo)"
 sudo systemctl enable --now drive-gekko-repo.timer >/dev/null
 ok "drive-gekko-repo.timer (cada 6 h: git pull y, si cambio algo, construir)"
 
 install -Dm644 "${ROOT}/systemd/drive-gekko-check.service" "${HOME}/.config/systemd/user/drive-gekko-check.service"
 systemctl --user daemon-reload 2>/dev/null || true
 systemctl --user enable drive-gekko-check.service >/dev/null 2>&1 && ok "drive-gekko-check.service (aviso en cada inicio de sesion)" \
-  || warn "no se pudo habilitar el servicio de usuario; el hook de pacman sigue activo"
+  || warn "no se pudo habilitar el servicio de usuario: systemctl --user necesita el bus de tu
+      sesion, y por ssh o en una tty pelada no lo hay. El hook de pacman sigue activo; para
+      ponerlo, desde tu sesion grafica:  systemctl --user enable drive-gekko-check.service"
 "${LIB_DIR}/post-upgrade-check.sh" || true
 
 cat <<FIN

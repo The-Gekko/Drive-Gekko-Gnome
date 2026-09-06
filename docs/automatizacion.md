@@ -31,13 +31,13 @@ ser **mayor** (`vercmp`): un retroceso nunca se aplica solo.
 | --- | --- | --- |
 | GitHub | `scripts/sync-upstream.sh` | El cerebro. Compara cada PKGBUILD con su fuente; con `--apply` edita `pkgver`, `pkgrel` y el checksum. Ejecutable en tu máquina: sin `--apply` solo informa |
 | GitHub | `.github/workflows/sync-upstream.yml` | El vigilante. Cada 8 h (o con *Run workflow*) ejecuta el anterior y decide: nada / push a main / PR / issue |
-| GitHub | `.github/workflows/build.yml` | Con cada push o PR: lint y la cadena entera en un Arch limpio |
+| GitHub | `.github/workflows/build.yml` | Con cada push o PR (y cada lunes): lint; la cadena entera con `build-all.sh`; y, en un job aparte sobre un contenedor **sin preparar**, el camino de una máquina real (`local-repo.sh`: solo `makedepends` y `makepkg -d`), que es el único que caza una dependencia de compilación sin declarar |
 | ambos | `scripts/build-all.sh --install` | Construye e instala la cadena en orden. Lo usa el CI |
-| ambos | `scripts/verify-chain.sh` | Dice si la cadena instalada sirve (ldd, pin de gvfs, scope de Drive, libsoup 2.4) |
-| ambos | `scripts/publish-repo.sh --check` | `repo-add` con lista blanca de 4 y prueba de que pacman lee la `.db` |
-| tu máquina | `scripts/local-repo.sh` + `systemd/drive-gekko-repo.{service,timer}` | Cada 6 h: `git pull`; si cambió un PKGBUILD, construye como tu usuario, instala `libsoup2`/`libgdata`, y deja `gvfs-google`/`gnome-online-accounts` en el repo local para tu próximo `pacman -Syu` |
-| tu máquina | `scripts/add-repo.sh --local` | Mete el repositorio local en `/etc/pacman.conf` antes de `[core]`, y lo recoloca si está mal |
-| tu máquina | `pacman-hooks/`, `systemd/drive-gekko-check.service` | La última red: avisan si algo pisa el GOA, el pin o el orden de repos |
+| ambos | `scripts/verify-chain.sh` | Dice si la cadena instalada sirve (ldd, pin de gvfs, scope de Drive, libsoup 2.4). La quinta, que haya llavero, solo avisa: no es parte de lo que construimos |
+| ambos | `scripts/publish-repo.sh --check` | `repo-add` con lista blanca de 4, prueba de que pacman lee la `.db` y de que el `DownloadUser` de pacman llega hasta ella |
+| tu máquina | `scripts/local-repo.sh` + `systemd/drive-gekko-repo.{service,timer}` | Cada 6 h: `git pull`; si cambió un PKGBUILD **o falta algo en `out/`**, instala los `makedepends` de las recetas, construye como tu usuario, instala `libsoup2`/`libgdata`, y deja `gvfs-google`/`gnome-online-accounts` en el repo local para tu próximo `pacman -Syu` |
+| tu máquina | `scripts/add-repo.sh --local` | Mete el repositorio local en `/etc/pacman.conf` antes de `[core]`, lo recoloca si está mal, y da acceso de lectura por ACL al `DownloadUser` de pacman (si no puede, no escribe el bloque) |
+| tu máquina | `pacman-hooks/`, `systemd/drive-gekko-check.service` | La última red: avisan si algo pisa el GOA, el pin, el orden de los repos, la ruta del repositorio local o el llavero. Siempre salen con 0 (`ESTRICTO=1` es lo que el CI usa para que fallen de verdad) |
 
 ## Qué pasa en cada caso
 
@@ -103,6 +103,8 @@ run en rojo.
 | --- | --- | --- |
 | Arch sube gvfs/GOA y el bot aún no ha corrido (≤ 8 h) o el temporizador no ha construido (≤ 6 h) | `pacman -Syu` se planta: *«instalar gvfs (X) rompe la dependencia gvfs=Y requerida por gvfs-google»* | `sudo systemctl start drive-gekko-repo.service`; si la receta aún no está en git, *Actions → sync-upstream → Run workflow* |
 | El temporizador no puede hacer `git pull` | Notificación «fallo al actualizar» y `journalctl -u drive-gekko-repo` | El repo es público: no hay credencial que arreglar. Mirar la red y que el remoto del clon sea el `https` (`git -C <clon> remote -v`) |
+| El temporizador se cuelga, o lo mata el sistema (OOM, SIGKILL) | La unidad corta a las 2 h (`TimeoutStartSec`) y su `ExecStopPost` notifica con el motivo que da systemd | `journalctl -u drive-gekko-repo -b`. Sin ese límite la unidad se quedaría en *activating* para siempre y el temporizador no volvería a dispararse |
 | GitHub Actions caído o con la cola parada | Nada nuevo en `main` | `./scripts/sync-upstream.sh --apply` en tu máquina, revisar el diff, commit, y `sudo systemctl start drive-gekko-repo.service` |
 | Alguien pone el repo después de `[extra]` | Hook y notificación | `sudo scripts/add-repo.sh --local <repo>/out` |
+| Mueves o renombras el clon | Todo `pacman -Sy` falla, y el temporizador muere diciendo que el clon ya no está en la ruta de `/etc/drive-gekko-gnome.conf` | Corregir los **dos** sitios: `sudo <clon>/scripts/add-repo.sh --local <clon>/out` y `REPO=` en `/etc/drive-gekko-gnome.conf` |
 | GNOME borra la opción `google` de gvfs | Issue: *«fin del camino»* | Quedarse en la versión actual o migrar a rclone ([estado-upstream.md](estado-upstream.md)) |

@@ -7,6 +7,9 @@
 #   ./scripts/build-all.sh --only libgdata    # construir un paquete concreto
 #   ./scripts/build-all.sh --clean            # borrar src/ pkg/ antes de construir
 #
+# Lo que no es de la cadena (deja-dup) va a out-opcional/, no a out/: out/ es
+# el repositorio local y publish-repo.sh solo admite los cuatro de la cadena.
+#
 # NO ejecutar como root: makepkg lo rechaza a proposito.
 
 set -euo pipefail
@@ -21,6 +24,9 @@ OUT_DIR="${REPO_ROOT}/out"
 # nada: es quien pide a Google el permiso de Drive. Va el ultimo porque es el
 # unico que sombrea un paquete oficial de Arch.
 ORDER=(libsoup2 libgdata gvfs-google gnome-online-accounts)
+# La misma lista blanca que publish-repo.sh. --only la pisa en ORDER, asi que
+# se guarda aparte: es lo unico que puede acabar en out/.
+CHAIN=("${ORDER[@]}")
 
 # Opcionales: siguen en los repos oficiales, se construyen solo si los pides.
 OPTIONAL=(deja-dup)
@@ -44,13 +50,12 @@ while [[ $# -gt 0 ]]; do
     --clean)         DO_CLEAN=1; shift ;;
     --with-optional) WITH_OPTIONAL=1; shift ;;
     --only)          ONLY="${2:?--only necesita un paquete}"; shift 2 ;;
-    -h|--help)       sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help)       sed -n '2,13p' "$0"; exit 0 ;;
     *)               die "opcion desconocida: $1" ;;
   esac
 done
 
 [[ $EUID -eq 0 ]] && die "no ejecutes esto como root"
-command -v makepkg >/dev/null || die "falta base-devel (makepkg no encontrado)"
 
 if [[ -n "$ONLY" ]]; then
   [[ -d "${REPO_ROOT}/packages/${ONLY}" ]] || die "no existe packages/${ONLY}"
@@ -58,6 +63,22 @@ if [[ -n "$ONLY" ]]; then
 elif (( WITH_OPTIONAL )); then
   ORDER+=("${OPTIONAL[@]}")
 fi
+
+# `command -v makepkg` no discriminaba nada: /usr/bin/makepkg lo trae el
+# paquete `pacman` (pacman -Qo /usr/bin/makepkg), no base-devel, asi que esa
+# guarda pasaba siempre. Lo que falta de verdad en un Arch sin base-devel es
+# fakeroot, y debugedit cuando makepkg.conf deja activa la opcion `debug` y el
+# PKGBUILD no la apaga: makepkg aborta en check_software con rc=15 antes de
+# compilar nada. Aqui, al reves que en install.sh, no hay ningun paso que los
+# instale, asi que la guarda tiene que ser de verdad.
+falta=()
+command -v fakeroot >/dev/null || falta+=(fakeroot)
+if ! command -v debugedit >/dev/null && grep -qE '^OPTIONS=\(([^)]*[[:space:]])?debug[[:space:])]' /etc/makepkg.conf 2>/dev/null; then
+  for p in "${ORDER[@]}"; do
+    grep -qE '^options=\(.*!debug' "${REPO_ROOT}/packages/${p}/PKGBUILD" || { falta+=(debugedit); break; }
+  done
+fi
+(( ${#falta[@]} )) && die "falta ${falta[*]} (makepkg aborta en check_software): sudo pacman -S --needed base-devel"
 
 # Aviso: construir e instalar por separado no funciona para esta cadena. Cada
 # paquete necesita las CABECERAS del anterior ya instaladas, no solo su .pkg.
@@ -78,7 +99,10 @@ for pkg in "${ORDER[@]}"; do
 
   # Sin --needed a proposito: con el, pacman OMITE nuestro gnome-online-accounts
   # cuando el de Arch ya esta instalado con la misma version (caso normal).
-  makepkg_args=(--syncdeps --cleanbuild --noconfirm)
+  # --force: makepkg deja el .pkg.tar.zst en el directorio de la receta y se
+  # niega a rehacerlo ("A package has already been built") mientras siga ahi,
+  # asi que sin esto la segunda pasada sobre la misma version falla siempre.
+  makepkg_args=(--syncdeps --cleanbuild --noconfirm --force)
   (( DO_INSTALL )) && makepkg_args+=(--install)
 
   if ! makepkg "${makepkg_args[@]}"; then
@@ -90,11 +114,19 @@ for pkg in "${ORDER[@]}"; do
   # --packagelist respeta PKGDEST si el usuario lo tiene en makepkg.conf.
   mapfile -t built < <(makepkg --packagelist 2>/dev/null)
   (( ${#built[@]} )) || warn "${pkg}: no se genero ningun .pkg.tar.zst"
+  # Solo la cadena entra en out/. publish-repo.sh tiene una lista blanca
+  # cerrada y hace die con cualquier otro paquete, asi que un deja-dup ahi
+  # dejaria el repo local sin regenerar -y al temporizador recompilando y
+  # muriendo cada 6 h- hasta que alguien borrase el fichero a mano.
+  dest="$OUT_DIR"
+  printf '%s\n' "${CHAIN[@]}" | grep -qx "$pkg" || dest="${REPO_ROOT}/out-opcional"
+  mkdir -p "$dest"
   for f in "${built[@]}"; do
     [[ -f "$f" ]] || continue
-    mv -f "$f" "$OUT_DIR/"
+    mv -f "$f" "$dest/"
     ok "$(basename "$f")"
   done
+  [[ "$dest" == "$OUT_DIR" ]] || info "${pkg} no es de la cadena: queda en out-opcional/, fuera del repo local"
 
   popd >/dev/null
 done

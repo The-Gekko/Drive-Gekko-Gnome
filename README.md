@@ -37,17 +37,24 @@
 
 ## Instalación
 
-**Necesitas:** Arch Linux con GNOME, `base-devel` y `git`, un usuario con `sudo`,
-conexión a internet y unos 10 minutos de compilación. Si tienes instalado el
-paquete `libsoup` (2.4) del AUR, el script te pedirá quitarlo antes: `libsoup2`
-lo sustituye.
+**Necesitas:** Arch Linux con GNOME, un usuario con `sudo`, conexión a internet
+y unos 10 minutos de compilación. «Con GNOME» no es una receta: si montaste el
+escritorio a mano puede faltarte alguna de estas piezas, así que instálalas
+antes. Si tienes el paquete `libsoup` (2.4) del AUR, el script te pedirá
+quitarlo: `libsoup2` lo sustituye.
 
 ```bash
-sudo pacman -S --needed base-devel git
+sudo pacman -S --needed base-devel git gvfs gvfs-goa gnome-control-center gnome-keyring
 git clone https://github.com/The-Gekko/Drive-Gekko-Gnome.git
 cd Drive-Gekko-Gnome
 ./install.sh
 ```
+
+`gnome-keyring` está en esa lista por un motivo que no se ve: es quien aporta
+`org.freedesktop.secrets`, y en Arch **nadie lo arrastra como dependencia**, ni
+siquiera `gnome-session`. Sin él la cadena se instala y verifica entera, y aun
+así la cuenta de Google no se puede dar de alta
+([abajo](#el-paso-que-no-puede-hacer-el-script)).
 
 Los binarios no se publican en GitHub: **cada máquina los construye** a partir
 de las recetas de este repo. `install.sh`:
@@ -56,10 +63,24 @@ de las recetas de este repo. `install.sh`:
 2. construye los cuatro paquetes en orden y los deja en un **repositorio de pacman local** (`out/`)
 3. pone ese repositorio en `/etc/pacman.conf`, **antes** de `[core]` (abajo el porqué)
 4. instala `gvfs-google` y `gnome-online-accounts` desde ahí con `pacman -Syu` (tú confirmas)
-5. deja puesto un **temporizador** (`drive-gekko-repo.timer`, cada 6 h) que hace `git pull` y,
-   si el bot cambió alguna receta, reconstruye y actualiza el repositorio local
-6. deja puestos el hook de pacman y el servicio de inicio de sesión que avisan si algo rompe el montaje
-7. **verifica** que el resultado sirve (que `gvfsd-google` enlaza y que GOA pide el permiso de Drive)
+5. **verifica** que el resultado sirve: que `gvfsd-google` enlaza y que GOA pide
+   el permiso de Drive (y avisa si falta el llavero, que no lo construye este repo)
+6. deja puestos el **temporizador** (`drive-gekko-repo.timer`, cada 6 h: `git pull` y,
+   si el bot cambió alguna receta, reconstruir), el hook de pacman y el servicio de
+   inicio de sesión. El hook va el último a propósito: armado antes, cualquier
+   `pacman -S` que hicieras para desatascar una instalación a medias dispararía
+   avisos críticos sobre una cadena que todavía no existe
+
+> [!NOTE]
+> **Qué se instala solo y qué no.** El paso 1 pone las herramientas
+> (`base-devel git glib2-devel gobject-introspection meson ninja vala gcr`) y el
+> paso 2 instala además los `makedepends` que declara cada receta, leyéndolos
+> de su `.SRCINFO` — hoy 28 paquetes: `gcr`, `gcr-4`, `libgoa`, `gtk4`,
+> `libadwaita`, `krb5`, `libxslt`… Lo que **nunca** se instala solo son los
+> `depends`: la construcción usa `makepkg -d`. Así que si un build para con
+> `ERROR: Dependency 'X' not found`, falta el paquete que provee ese `.pc`:
+> localízalo (`sudo pacman -Fy` una vez, después `pacman -F X.pc`), instálalo y
+> vuelve a lanzar `./install.sh`.
 
 A partir de ahí, **`sudo pacman -Syu` instala las actualizaciones** que el
 temporizador haya construido, en la misma transacción que el `gvfs` o `libgoa`
@@ -97,7 +118,18 @@ Server = file:///ruta/al/clon/Drive-Gekko-Gnome/out
 ```
 
 (con los espacios de la ruta como `%20`; `scripts/add-repo.sh --local <ruta>/out`
-lo escribe bien y lo recoloca si ya estaba en mal sitio)
+lo escribe bien, lo recoloca si estaba en mal sitio y comprueba antes que pacman
+puede leerlo)
+
+**Por qué «que pacman puede leerlo» no sobra:** pacman no lee los repositorios
+como root, sino como el usuario de `DownloadUser` (de fábrica `alpm`), y lo hace
+también con los `file://`. Si el clon cuelga de un HOME con el `0700` de
+fábrica, ese usuario no puede ni atravesarlo, y entonces falla **todo**
+`pacman -Sy` de la máquina, no solo lo de Drive. `add-repo.sh` lo comprueba
+ejecutando como ese usuario y, si hace falta, le concede lo mínimo con ACL:
+paso (`--x`) en cada directorio del camino y lectura (`r-X`) sobre `out/`. Si
+no lo consigue **no escribe el bloque** y sale con error: mejor eso que dejar
+pacman inservible.
 
 **Por qué antes de `[core]`:** `gnome-online-accounts` existe en `[extra]`, y
 pacman elige el *primer* repositorio de `pacman.conf` que tenga un paquete con
@@ -118,6 +150,14 @@ Este paso **no es opcional y no se puede saltar**. El token que Google te dio
 antes se firmó sin el permiso de Drive, y Google no lo amplía de forma
 retroactiva. Sin reautorizar, Nautilus dará *«Permiso denegado»* aunque todo lo
 demás esté perfecto.
+
+Y hace falta un **llavero** en la sesión: GOA guarda el token con libsecret
+contra `org.freedesktop.secrets`, que en Arch aporta `gnome-keyring` y que nadie
+instala por ti. Si no hay ninguno, el consentimiento de Google termina en
+*«Failed to store credentials in the keyring»* y la cuenta **no llega a
+crearse**, con los cuatro paquetes instalados y todo lo demás diciendo
+«operativo». `verify-chain.sh` lo avisa y el hook de pacman lo grita; el arreglo
+es `sudo pacman -S --needed gnome-keyring` y volver a añadir la cuenta.
 
 ### Comprobar que funciona
 
@@ -180,13 +220,20 @@ Dos piezas, cada una en su sitio:
 **En GitHub, un bot** (`.github/workflows/sync-upstream.yml`) mira cada 8 horas
 si Arch movió `gvfs` o `gnome-online-accounts`, si GNOME publicó un `libsoup`
 2.74.x nuevo, si Arch amplió sus parches, y si Solus cambió los flags que nos
-importan. Cuando hay un cambio, **construye y verifica la cadena entera en un
-Arch limpio** antes de tocar nada. La regla:
+importan. Cuando hay un cambio, **construye, instala y verifica la cadena entera
+en un contenedor de Arch limpio** antes de tocar nada. La regla:
 
 > **Si Arch sube el último número de gvfs o cualquier cosa de GOA dentro de la
 > misma serie, el bot lo aplica solo en `main`. Si cambia de serie, si es
 > libsoup2 o libgdata, abre un PR y el propietario pulsa Merge. Si Solus toca
 > sus flags o algo no se puede leer, abre un issue y no bloquea lo demás.**
+
+Ese build usa `build-all.sh` (`makepkg --syncdeps`, que instala también los
+`depends`), que **no** es el camino de tu máquina. El que sí lo es —
+`local-repo.sh`, solo `makedepends` y `makepkg -d` — lo recorre un job aparte de
+`build.yml`, en un contenedor pelado y sin preparar: es el que caza que a una
+receta le falte declarar una dependencia de compilación, que es exactamente lo
+que un CI en verde por el otro camino no demuestra.
 
 **En tu máquina, un temporizador** (`drive-gekko-repo.timer`, cada 6 h) hace
 `git pull` y, solo si cambió alguna receta, reconstruye los paquetes y actualiza
@@ -205,6 +252,7 @@ versiones de Solus), qué pasa en cada caso y qué puede fallar:
 | Arch actualiza `gvfs` o `gnome-online-accounts` y tu repositorio local aún no tiene la receta nueva construida | `pacman -Syu` **se planta** con un conflicto de dependencias (el pin funcionando, a propósito) | `sudo systemctl start drive-gekko-repo.service` (trae y construye) y repetir `pacman -Syu`. Si el bot aún no subió la receta: esperar (≤ 8 h) o *Actions → sync-upstream → Run workflow* |
 | Alguien pone el repo después de `[extra]`, o instala el GOA de Arch a mano | El hook de pacman lo grita al terminar la transacción y llega una notificación | `sudo scripts/add-repo.sh --local <repo>/out` lo recoloca; `sudo pacman -Syu` |
 | El temporizador no puede hacer `git pull` | Notificación: «fallo al actualizar» y `journalctl -u drive-gekko-repo` | El repo es público, así que suele ser red, o un clon con el remoto en `ssh`: `git -C <clon> remote -v` debe apuntar al `https` |
+| Mueves o renombras el clon | **Todo** `pacman -Sy` falla («no se pudo obtener el archivo `drive-gekko-gnome.db`»); el aviso de inicio de sesión lo dice en rojo | Hay que corregir **dos** sitios: `sudo <clon>/scripts/add-repo.sh --local <clon>/out` y `REPO=` en `/etc/drive-gekko-gnome.conf` |
 | GNOME borra la opción `google` de gvfs | El bot abre un issue; `./scripts/check-updates.sh` lo avisa | Fin del camino: quedarte en la versión actual o migrar a rclone |
 
 El caso peligroso es el segundo, porque **no da ningún error**: Drive
@@ -212,19 +260,26 @@ simplemente deja de montar. Por eso `install.sh` deja dos avisos puestos:
 
 | Dónde | Cuándo salta |
 | --- | --- |
-| `/etc/pacman.d/hooks/99-drive-gekko-gnome.hook` | Justo al terminar cualquier `pacman` que toque `gnome-online-accounts` o `gvfs`. Escribe en la terminal **y lanza una notificación de escritorio** |
+| `/etc/pacman.d/hooks/99-drive-gekko-gnome.hook` | Justo al terminar cualquier `pacman` que toque `gnome-online-accounts`, `gvfs`, `gvfs-google` o `gnome-keyring`. Escribe en la terminal **y lanza una notificación de escritorio** |
 | `~/.config/systemd/user/drive-gekko-check.service` | En cada inicio de sesión, por si la actualización pasó cuando no estabas mirando |
 
-Los dos ejecutan la misma comprobación: que el binario instalado sigue pidiendo
-el permiso, que `gvfsd-google` sigue enlazando, y que el pin de `gvfs` sigue
-coincidiendo con lo instalado. La primera, a mano:
+Los dos ejecutan la misma comprobación (`post-upgrade-check.sh`): que el binario
+instalado sigue pidiendo el permiso, que `gvfsd-google` sigue enlazando, que el
+pin de `gvfs` sigue coincidiendo con lo instalado, que hay llavero, y que el
+repositorio local sigue en `pacman.conf`, delante de `[extra]` y apuntando a un
+sitio que existe. La primera, a mano:
 
 ```bash
 strings /usr/lib/libgoa-backend-1.0.so | grep googleapis.com/auth/drive
 ```
 
 No arreglan nada solos — construir paquetes no se hace dentro de una
-transacción de pacman — pero hacen imposible no enterarse.
+transacción de pacman — pero hacen imposible no enterarse. Por lo mismo, el
+hook **termina siempre con 0** aunque encuentre la cadena rota: un hook que
+devuelve error solo consigue que pacman remate cada actualización con *«command
+failed to execute correctly»*, que no explica nada. El aviso va por la terminal
+y por notificación. (Con `ESTRICTO=1` en el entorno sí devuelve 1; eso es para
+el CI, que lo usa como comprobación de verdad.)
 
 También puedes preguntarlo tú en cualquier momento:
 
@@ -244,15 +299,15 @@ También puedes preguntarlo tú en cualquier momento:
 | Script | Para qué |
 | --- | --- |
 | `./install.sh` | Todo lo anterior de una vez |
-| `sudo scripts/local-repo.sh` | Lo que hace el temporizador: `git pull`, construir si cambió algo, repo local. `--dry-run` para ver el plan |
-| `./scripts/add-repo.sh --local DIR` | Solo el bloque de `pacman.conf`, en el sitio correcto (y lo recoloca si está mal) |
-| `./scripts/publish-repo.sh --check` | Genera `out/drive-gekko-gnome.db` (lista blanca de 4) y prueba que pacman la lee |
+| `sudo scripts/local-repo.sh` | Lo que hace el temporizador: `git pull`, construir si cambió algo (o si a `out/` le falta un paquete), repo local. `--dry-run`, sin `sudo`, para ver el plan |
+| `./scripts/add-repo.sh --local DIR` | El bloque de `pacman.conf`, en el sitio correcto (y lo recoloca si está mal). Antes de escribirlo, comprueba que el `DownloadUser` de pacman llega a `DIR` y le da acceso con ACL si no |
+| `./scripts/publish-repo.sh --check` | Genera `out/drive-gekko-gnome.db` (lista blanca de 4) y prueba que pacman la lee, incluido que el `DownloadUser` llega hasta ella |
 | `./scripts/sync-upstream.sh` | Lo que hace el bot, en tu máquina: sin `--apply` solo informa |
-| `./scripts/verify-chain.sh` | ¿La cadena instalada sirve? ldd, pin, scope, libsoup 2.4 |
+| `./scripts/verify-chain.sh` | ¿La cadena instalada sirve? ldd, pin, scope, libsoup 2.4 y llavero (esto último solo avisa) |
 | `./scripts/ci-prepare.sh` | Prepara el contenedor de Arch del CI (lo usan los dos workflows) |
 | `./scripts/check-updates.sh` | Versiones, el pin de gvfs, el estado de la opción `google` y si GOA sigue pidiendo el permiso de Drive |
 | `./scripts/check-sources.sh` | De qué repo puede salir hoy cada paquete: oficiales, AUR o Chaotic |
-| `./scripts/build-all.sh` | Construir la cadena por partes, o generar un repo local de pacman |
+| `./scripts/build-all.sh` | Construir la cadena por partes. Lo que no es de la cadena (`--with-optional`) va a `out-opcional/`, fuera del repo local |
 | `./scripts/lint.sh` | `bash -n` + `namcap` sobre los PKGBUILD |
 
 ## De dónde sale el código
@@ -302,7 +357,7 @@ Drive-Gekko-Gnome/
 ├── pacman-hooks/                  # aviso post-actualización (terminal + notificación)
 ├── systemd/                       # temporizador de reconstrucción + comprobación de login
 ├── .github/workflows/
-│   ├── build.yml                  # push a main y PRs (si tocan paquetes/scripts): lint y cadena entera
+│   ├── build.yml                  # push, PRs y cron semanal: lint, cadena entera y camino de máquina
 │   └── sync-upstream.yml          # cada 8 h: ¿hay que actualizar algo? auto / PR / issue
 ├── upstream/solus/                # canario: el setup: de Solus la última vez que se miró
 ├── CREDITS.md                     # quién hizo qué: Solus, Arch, GNOME

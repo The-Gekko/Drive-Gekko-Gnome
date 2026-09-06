@@ -10,6 +10,12 @@
 # dentro de una transaccion de pacman. Lo que hace es que sea imposible no
 # enterarse.
 #
+# El script SIEMPRE sale con 0, aunque encuentre la cadena rota: un hook que
+# devuelve error solo consigue que pacman remate cada actualizacion con
+# "command failed to execute correctly", que no explica nada. El aviso va por
+# stdout y por notificacion de escritorio. (Con ESTRICTO=1 en el entorno si
+# devuelve 1; eso es para el CI, no para aqui.)
+#
 # Instalar en: /etc/pacman.d/hooks/99-drive-gekko-gnome.hook
 # El script va en: /usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh
 
@@ -21,6 +27,10 @@ Type = Package
 Target = gnome-online-accounts
 Target = gvfs
 Target = gvfs-google
+# gnome-keyring no es parte de la cadena, pero es quien aporta
+# org.freedesktop.secrets: sin el, GOA no puede guardar el token y la cuenta de
+# Google no se llega a anadir, con los cuatro paquetes perfectamente instalados.
+Target = gnome-keyring
 
 [Action]
 Description = Drive-Gekko-Gnome: comprobando el acceso a Google Drive...

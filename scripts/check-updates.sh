@@ -80,7 +80,12 @@ print(sorted(names, key=key)[-1] if names else "?")
 
 report() {
   local pkg="$1" local_v="$2" up_v="$3"
-  if [[ "$local_v" == "$up_v" ]]; then
+  # Las cuatro fuentes devuelven '?' cuando no se las pudo consultar (sin red,
+  # 404, o el formato cambio). Sin esta rama salia "hay ? upstream", que se lee
+  # como si hubiera una version nueva esperando.
+  if [[ -z "$up_v" || "$up_v" == "?" ]]; then
+    printf '%-12s %-10s %sno se pudo consultar (sin red, o la fuente cambio)%s\n' "$pkg" "$local_v" "$C_DIM" "$C_OFF"
+  elif [[ "$local_v" == "$up_v" ]]; then
     printf '%-12s %-10s %sal dia%s\n' "$pkg" "$local_v" "$C_OK" "$C_OFF"
   else
     printf '%-12s %-10s %shay %s upstream%s\n' "$pkg" "$local_v" "$C_WARN" "$up_v" "$C_OFF"
@@ -111,8 +116,11 @@ print(sorted(versions, key=key)[-1])
 
 # gvfs-google NO sigue a GNOME: sigue al gvfs de [extra], porque enlaza contra
 # su libgvfscommon.so. Comparar con la ultima de GNOME solo genera ruido.
+# Siempre con el prefijo extra/, como en sync-upstream.sh: en esta maquina el
+# repo local va DELANTE de [extra] en pacman.conf, y un `pacman -Si <nombre>`
+# a secas devolveria la version de ahi en cuanto el nombre coincidiera.
 arch_repo_ver() {
-  LC_ALL=C pacman -Si "$1" 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || echo "?"
+  LC_ALL=C pacman -Si "extra/$1" 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || echo "?"
 }
 
 printf '%-12s %-10s %s\n' "PAQUETE" "LOCAL" "ESTADO"
@@ -136,7 +144,7 @@ gvfs_pin_check() {
   pin="$(local_ver gvfs-google)"
   # LC_ALL=C: la etiqueta es 'Version' en cualquier idioma. `|| true`: con
   # set -e y pipefail, un pacman que falle mataria el script en silencio.
-  repo_v="$(LC_ALL=C pacman -Si gvfs 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || true)"
+  repo_v="$(LC_ALL=C pacman -Si extra/gvfs 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || true)"
   inst_v="$(pacman -Q gvfs 2>/dev/null | awk '{print $2}' | cut -d- -f1 || true)"
 
   echo
@@ -175,7 +183,7 @@ AVISO
 
 google_option_check() {
   local v opts
-  v="$(LC_ALL=C pacman -Si gvfs 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || true)"
+  v="$(LC_ALL=C pacman -Si extra/gvfs 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}' | cut -d- -f1 || true)"
   [[ -z "$v" ]] && return
 
   opts="$(curl -fsSL --max-time 20 \
@@ -215,18 +223,30 @@ google_option_check
 # ############################################################################
 
 goa_drive_check() {
+  local goa
   echo
   if ! pacman -Qq gvfs-google >/dev/null 2>&1; then
     printf '%s-- gvfs-google no instalado, se omite%s\n' "$C_DIM" "$C_OFF"
     return
   fi
 
-  # `grep -q` cierra la tuberia y con `pipefail` eso cuenta como fallo:
-  # por eso se vuelca a una variable antes de buscar.
+  # La ruta se materializa ANTES de buscar dentro: `find -exec ... +` no llega
+  # a ejecutar grep si el -name no casa, y entonces find sale con 0. Es decir,
+  # sin libreria esto respondia "GOA pide el scope": la mentira mas cara que
+  # puede decir este script. Mismo patron que scripts/verify-chain.sh:33.
   # grep -a lee el binario sin depender de binutils; el patron exige 'drive'
   # seguido de espacio o fin de linea (no vale drive.file ni drive.readonly).
-  if find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f \
-       -exec grep -aqE 'googleapis\.com/auth/drive( |$)' {} + 2>/dev/null; then
+  goa="$(find /usr/lib -maxdepth 1 -name 'libgoa-backend-1.0.so*' -type f 2>/dev/null | head -1 || true)"
+  if [[ -z "$goa" ]]; then
+    printf '%s!! NO HAY NINGUN libgoa-backend-1.0.so EN /usr/lib%s\n' "$C_ERR" "$C_OFF"
+    cat <<'AVISO'
+   gnome-online-accounts NO esta instalado (pacman lo permite: gvfs-google
+   depende de libgoa, que es otra cosa). Sin el no hay cuenta de Google, y
+   Nautilus no puede montar nada.
+
+     sudo pacman -Syu gnome-online-accounts    # el de este repo, desde out/
+AVISO
+  elif grep -aqE 'googleapis\.com/auth/drive( |$)' "$goa"; then
     printf '%s== GOA pide el scope de Drive: Nautilus puede montar%s\n' "$C_OK" "$C_OFF"
   else
     printf '%s!! GOA YA NO PIDE EL SCOPE DE DRIVE%s\n' "$C_ERR" "$C_OFF"

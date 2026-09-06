@@ -24,6 +24,11 @@ RemainAfterExit=no
 # arranque frio la notificacion se pierde porque aun no hay nadie escuchando.
 ExecStartPre=/usr/bin/sleep 20
 ExecStart=/usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh
+# Type=oneshot no lleva limite de tiempo por defecto (systemd.service(5)), y
+# aqui se llama a notify-send: si el bus responde pero nadie atiende el nombre,
+# la unidad se queda en "activating" el resto de la sesion. 20 s de espera mas
+# la comprobacion caben de sobra en 5 min.
+TimeoutStartSec=5min
 
 [Install]
 WantedBy=graphical-session.target

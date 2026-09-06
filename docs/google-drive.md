@@ -30,9 +30,12 @@ pero compilado sin el soporte de Drive, así que no vale.
 ## 1. Instalar
 
 ```bash
-sudo pacman -S --needed gvfs gvfs-goa gnome-control-center gnome-keyring
+sudo pacman -S --needed base-devel git gvfs gvfs-goa gnome-control-center gnome-keyring
 ./install.sh
 ```
+
+Es la misma lista del README. `gnome-keyring` no lo arrastra nadie en Arch y sin
+él la cuenta no se puede dar de alta, aunque todo lo demás diga «operativo».
 
 Dos comprobaciones rápidas:
 
@@ -130,6 +133,7 @@ Recomendaciones:
 | --- | --- | --- |
 | No aparece el interruptor *Archivos* | GOA compilado sin `google_files` (el de Arch lo está) | `strings /usr/lib/libgoa-backend-1.0.so \| grep auth/drive` |
 | *«Permiso denegado»* al montar, con todo instalado | el token OAuth es anterior y no tiene el permiso de Drive | quitar y volver a añadir la cuenta |
+| *«Failed to store credentials in the keyring»* al añadir la cuenta | no hay ningún proveedor de `org.freedesktop.secrets` instalado | `sudo pacman -S --needed gnome-keyring` y volver a añadirla |
 | Funcionaba y de pronto dejó de ir | Arch actualizó `gnome-online-accounts` encima del nuestro | Regla nº 4 de [mantenimiento.md](mantenimiento.md): subir `pkgver`/`pkgrel` y reconstruir |
 | La cuenta aparece pero no hay carpeta | `gvfs-goa` ausente o su monitor no arranca | `systemctl --user status gvfs-goa-volume-monitor` |
 | `gvfsd-google` muere al arrancar | `gvfs` subió de versión y el soname sin versionar ya no cuadra | `ldd /usr/lib/gvfsd-google \| grep -i "not found"` |

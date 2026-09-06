@@ -59,7 +59,7 @@ makedepends=(
 )
 checkdepends=('xdg-user-dirs')
 optdepends=(
-  'gvfs-google: destino de copia en Google Drive vía GNOME Online Accounts'
+  'gvfs-google: destino de copia en Google Drive via GNOME Online Accounts'
   'gvfs-onedrive: destino de copia en Microsoft OneDrive'
   'rclone: destinos remotos adicionales (Drive, OneDrive, S3...)'
 )

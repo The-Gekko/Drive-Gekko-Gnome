@@ -26,11 +26,11 @@
 # de GNOME no esta disponible). Si git llegara a pedir usuario, no es que falte
 # un token: es que el repo dejo de ser publico o el remoto del clon es ssh.
 
-set -euo pipefail
+set -eEuo pipefail
 export LC_ALL=C   # los mensajes de git/pacman se comparan en ingles
 
 CONF=/etc/drive-gekko-gnome.conf
-REPO=""; USER_=""; FORCE=0; PULL=1; DRY=0
+REPO=""; USER_=""; FORCE=0; PULL=1; DRY=0; AVISO=0
 [[ -r "$CONF" ]] && . "$CONF"    # define REPO y USER_
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,12 +39,58 @@ while [[ $# -gt 0 ]]; do
     --force) FORCE=1; shift ;;
     --no-pull) PULL=0; shift ;;
     --dry-run) DRY=1; shift ;;
+    --aviso-de-fallo) AVISO=1; shift ;;   # lo llama ExecStopPost de la unidad
     *) echo "opcion desconocida: $1" >&2; exit 1 ;;
   esac
 done
 [[ -n "$REPO" ]] || REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -n "$USER_" ]] || USER_="$(stat -c %U "$REPO")"
-[[ -d "$REPO/packages" ]] || { echo "no parece el repo: $REPO" >&2; exit 1; }
+
+# Los helpers van AQUI, antes de la primera comprobacion: el fallo mas probable
+# de todos (el clon movido) ocurre unas lineas mas abajo, y con die() definido
+# despues aquello salia con "die: orden no encontrada" y rc=127.
+log()  { printf '[drive-gekko] %s\n' "$*"; }
+# Ningun fallo en silencio: con set -e, un error sin mensaje seria invisible
+# en el journal. Y que se entere el usuario, no solo el journal. Hace falta el
+# -E de la linea 29 para que el trap salte tambien DENTRO de run() y as_user(),
+# que es donde fallan pacman, mkdir, cp y el sello; alli $BASH_COMMAND vale
+# literalmente "$@", asi que sin la linea de la llamada y el nombre de la
+# funcion el mensaje no diria nada de nada.
+on_err() {
+  local f="${FUNCNAME[1]:-main}" donde="la linea $1"
+  [[ "$f" == main ]] || donde="la linea $2 (dentro de $f(), linea $1)"
+  log "abortado en $donde (ultimo comando: $3)"
+  notificar "Drive-Gekko-Gnome: fallo al actualizar" "local-repo.sh abortado en $donde (journalctl -u drive-gekko-repo)"
+}
+trap 'on_err "$LINENO" "${BASH_LINENO[0]}" "$BASH_COMMAND"' ERR
+die()  { log "ERROR: $*"; notificar "Drive-Gekko-Gnome: fallo al actualizar" "$*"; exit 1; }
+as_user() { if [[ $EUID -eq 0 ]]; then runuser -u "$USER_" -- "$@"; else "$@"; fi; }
+run() { if (( DRY )); then log "(dry-run) $*"; else "$@"; fi; }
+
+notificar() {
+  # Avisar es lo accesorio: si el USER_ de la conf ya no existe, esto no puede
+  # tumbar ni el mensaje de error que lo llama ni una pasada que fue bien.
+  local uid; uid="$(id -u "$USER_" 2>/dev/null)" || return 0
+  [[ -S "/run/user/$uid/bus" ]] || return 0
+  runuser -u "$USER_" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    notify-send -u normal -i drive-harddisk -a "Drive-Gekko-Gnome" "$1" "$2" 2>/dev/null || true
+}
+
+# Lo invoca ExecStopPost de drive-gekko-repo.service, y es el unico aviso
+# posible cuando el script no llega a contarlo el mismo: un OOM, un SIGKILL o
+# el TimeoutStartSec de la unidad lo matan sin que el trap ERR llegue a correr.
+if (( AVISO )); then
+  res="${SERVICE_RESULT:-success}"
+  if [[ "$res" != success ]]; then
+    log "la unidad termino con resultado $res (codigo ${EXIT_CODE:-?}/${EXIT_STATUS:-?})"
+    notificar "Drive-Gekko-Gnome: fallo al actualizar" "El servicio termino con '$res'. Mira: journalctl -u drive-gekko-repo -b"
+  fi
+  exit 0
+fi
+
+[[ -d "$REPO/packages" ]] || die "el clon ya no esta en $REPO. Si lo has movido, pacman sigue apuntando ahi" \
+  "y no puede sincronizar NADA: corrige REPO en $CONF y vuelve a ejecutar" \
+  "'sudo <clon>/scripts/add-repo.sh --local <clon>/out'"
 if (( ! DRY )) && [[ $EUID -ne 0 ]]; then echo "ejecutalo con sudo (lo hace el temporizador), o con --dry-run" >&2; exit 1; fi
 
 # La copia instalada en /usr/local/lib puede quedarse vieja: si el clon tiene
@@ -67,21 +113,6 @@ INSTALL_NOW=(libsoup2 libgdata)          # no existen en [extra]: instalarlos no
 REPO_ONLY=(gvfs-google gnome-online-accounts)  # pinean gvfs/libgoa: los instala el -Syu del usuario
 OUT="$REPO/out"; STAMP="$OUT/.built-from"   # el nombre del repo lo pone publish-repo.sh
 
-log()  { printf '[drive-gekko] %s\n' "$*"; }
-# Ningun fallo en silencio: con set -e, un error sin mensaje seria invisible
-# en el journal. Y que se entere el usuario, no solo el journal.
-trap 'log "abortado en la linea $LINENO (ultimo comando: $BASH_COMMAND)"; notificar "Drive-Gekko-Gnome: fallo al actualizar" "local-repo.sh abortado (journalctl -u drive-gekko-repo)"' ERR
-die()  { log "ERROR: $*"; notificar "Drive-Gekko-Gnome: fallo al actualizar" "$*"; exit 1; }
-as_user() { if [[ $EUID -eq 0 ]]; then runuser -u "$USER_" -- "$@"; else "$@"; fi; }
-run() { if (( DRY )); then log "(dry-run) $*"; else "$@"; fi; }
-
-notificar() {
-  local uid; uid="$(id -u "$USER_")"
-  [[ -S "/run/user/$uid/bus" ]] || return 0
-  runuser -u "$USER_" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
-    notify-send -u normal -i drive-harddisk -a "Drive-Gekko-Gnome" "$1" "$2" 2>/dev/null || true
-}
-
 # 1. pull ---------------------------------------------------------------------
 if (( PULL )); then
   log "git pull como $USER_ en $REPO"
@@ -102,23 +133,42 @@ if (( PULL )); then
 fi
 
 # 2. ¿cambio algo? ------------------------------------------------------------
+# La huella son las recetas, pero con ellas no basta: si a out/ le falta un
+# paquete o la .db (un borrado a mano, un disco lleno, una pasada que aborto a
+# medias) y ningun PKGBUILD ha cambiado, saltarse el trabajo deja la .db
+# prometiendo ficheros que ya no estan, y eso aborta el `pacman -Syu` de TODA
+# la maquina, cuatro veces al dia y para siempre. Lo publicado tambien decide.
+publicado() {
+  local p m
+  for p in "${ORDER[@]}"; do m=("$OUT/$p"-*.pkg.tar.zst); [[ -f "${m[0]}" ]] || return 1; done
+  m=("$OUT"/*.db); [[ -f "${m[0]}" ]]
+}
 fp="$(for p in "${ORDER[@]}"; do cat "$REPO/packages/$p/PKGBUILD"; done | sha256sum | cut -c1-16)"
 if (( ! FORCE )) && [[ -r "$STAMP" ]] && [[ "$(cat "$STAMP")" == "$fp" ]]; then
-  log "sin cambios en los PKGBUILD desde la ultima construccion ($fp): nada que hacer"
-  exit 0
+  if publicado; then
+    log "sin cambios en los PKGBUILD desde la ultima construccion ($fp): nada que hacer"
+    exit 0
+  fi
+  log "los PKGBUILD no cambiaron, pero en $OUT falta algo de lo ya publicado: reconstruyendo"
+else
+  log "los PKGBUILD cambiaron (o --force): construyendo la cadena"
 fi
-log "los PKGBUILD cambiaron (o --force): construyendo la cadena"
 
 # 3. makedepends (como root, --needed: si ya estan, no toca nada) -------------
-# SOLO makedepends, nunca depends: gvfs, gvfs-goa y libgoa son dependencias en
-# tiempo de ejecucion pineadas a [extra]; un `pacman -S gvfs` aqui haria una
+# SOLO makedepends, nunca depends: gvfs y gvfs-goa son dependencias en tiempo
+# de ejecucion pineadas a [extra]; un `pacman -S gvfs` aqui haria una
 # actualizacion parcial a escondidas. Esas las instala el -Syu del usuario.
+# libgoa NO entra en esa lista negra: viene de [extra], no lleva pin y hace
+# falta para COMPILAR (goa-1.0), asi que si un PKGBUILD lo declara en
+# makedepends tiene que instalarse o el build muere en meson.
 srcinfo() { ( cd "$REPO/packages/$1" && as_user makepkg --printsrcinfo 2>/dev/null ); }
-deps=()
+# Semilla: fakeroot y debugedit no estan en ningun makedepends y makepkg aborta
+# sin ellos, asi que el temporizador tiene que garantizarlos el tambien.
+deps=(base-devel)
 for p in "${ORDER[@]}"; do
   while read -r d; do [[ -n "$d" ]] && deps+=("$d"); done < <(
     srcinfo "$p" | awk -F' = ' '/^\tmakedepends = /{print $2}' | sed -E 's/[<>=].*//' \
-    | grep -v '\.so' | grep -vxE 'gvfs|gvfs-goa|libgoa|gnome-online-accounts|libsoup2|libgdata|gvfs-google' || true)
+    | grep -v '\.so' | grep -vxE 'gvfs|gvfs-goa|gnome-online-accounts|libsoup2|libgdata|gvfs-google' || true)
 done
 mapfile -t deps < <(printf '%s\n' "${deps[@]}" | grep -v '^$' | sort -u || true)
 if (( ${#deps[@]} )); then
@@ -133,15 +183,25 @@ for p in "${ORDER[@]}"; do
   log "construyendo $p"
   # -d: las dependencias en tiempo de ejecucion (gvfs=X, libgoa=X) pueden no
   # estar aun instaladas A PROPOSITO; las makedepends ya se han instalado arriba.
-  if (( DRY )); then log "(dry-run) makepkg -d --cleanbuild --noconfirm en packages/$p"; continue; fi
-  ( cd "$REPO/packages/$p" && as_user makepkg -d --cleanbuild --noconfirm ) \
-    || die "no se pudo construir $p (mira el journal: journalctl -u drive-gekko-repo)"
+  # -f: si el .pkg.tar.zst de esa misma version sigue en packages/$p —y sigue
+  # siempre, porque makepkg lo deja ahi y solo se COPIA a out/— makepkg se niega
+  # con "A package has already been built". Sin esto, reconstruir una version
+  # que ya se construyo una vez es imposible: revienta --force, revienta la
+  # reconstruccion tras vaciar out/, y revienta el reintento del temporizador
+  # cuando una pasada anterior murio despues del primer paquete.
+  if (( DRY )); then log "(dry-run) makepkg -df --cleanbuild --noconfirm en packages/$p"; continue; fi
+  ( cd "$REPO/packages/$p" && as_user makepkg -df --cleanbuild --noconfirm ) \
+    || die "no se pudo construir $p: lo mas comun con diferencia es que falte una dependencia de compilacion." \
+           "Busca el 'not found' de meson en la salida de arriba, o en 'journalctl -u drive-gekko-repo -b' si" \
+           "esto lo lanzo el temporizador"
   mapfile -t files < <(cd "$REPO/packages/$p" && as_user makepkg --packagelist | grep -v -- '-debug-')
   (( ${#files[@]} )) || die "$p: makepkg no genero paquete"
-  # Fuera las versiones anteriores de ESTE paquete en out/: si quedaran dos,
-  # repo-add podria quedarse con la vieja (ordena por nombre, no por version:
-  # 1.60.10 va antes que 1.60.9) y borrar la nueva.
-  as_user find "$OUT" -maxdepth 1 -regextype posix-extended -regex ".*/${p}-[^-]+-[^-]+-[^-]+\.pkg\.tar\.zst" -delete
+  # Aqui SOLO se copia. Las versiones anteriores se borran despues del bucle,
+  # pegadas al repo-add: la .db solo se regenera al final, asi que borrar aqui
+  # y morir en un build posterior deja la .db ofreciendo un fichero que ya no
+  # existe, y entonces cualquier `pacman -Syu` de la maquina aborta entero con
+  # "no se pudo obtener el archivo ... desde disco". Y no se repara solo: el
+  # sello tampoco se escribe, asi que el temporizador repite el estado cada 6 h.
   for f in "${files[@]}"; do as_user cp -f "$f" "$OUT/"; built+=("$OUT/$(basename "$f")"); done
   if printf '%s\n' "${INSTALL_NOW[@]}" | grep -qx "$p"; then
     log "instalando $p (no existe en [extra]; hace falta para construir el siguiente)"
@@ -151,6 +211,19 @@ done
 (( DRY )) && { log "(dry-run) repo-add en $OUT y aviso"; exit 0; }
 
 # 6. repo local + sello ---------------------------------------------------------
+# Los cuatro han salido bien: ahora si, fuera las versiones anteriores. Tiene
+# que ser aqui, ANTES de publish-repo.sh: con dos versiones del mismo paquete
+# en out/, repo-add las toma en el orden del glob, que es alfabetico (1.60.10
+# va antes que 1.60.9); con ese orden borra la vieja del disco (--remove),
+# luego no la encuentra, aborta sin escribir la base y deja la .db apuntando
+# al fichero que acaba de borrar. Barre ademas lo que dejara una pasada
+# anterior que abortase a mitad.
+nuevos="$(printf '%s\n' "${built[@]}")"
+for p in "${ORDER[@]}"; do
+  while IFS= read -r f; do
+    grep -qxF "$f" <<<"$nuevos" || as_user rm -f "$f"
+  done < <(find "$OUT" -maxdepth 1 -regextype posix-extended -regex ".*/${p}-[^-]+-[^-]+-[^-]+\.pkg\.tar\.zst")
+done
 # publish-repo.sh: lista blanca, repo-add, y prueba de que pacman lee la .db
 OUT="$OUT" as_user "$REPO/scripts/publish-repo.sh" --check >/dev/null || die "el repo local no verifica (scripts/publish-repo.sh --check)"
 as_user bash -c "printf '%s\n' '$fp' > '$STAMP'"

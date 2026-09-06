@@ -48,6 +48,17 @@ optdepends=(
 makedepends=(
   'glib2-devel'          # gdbus-codegen y glib-mkenums
   'meson'                # trae ninja y python
+  # Lo unico que sigue exigiendo el meson de gvfs 1.60.2 despues de apagar en
+  # build() todos los backends que no son google. Repetido desde depends a
+  # proposito: la instalacion real (scripts/local-repo.sh) construye con
+  # `makepkg -d` y solo instala las makedepends, nunca las depends.
+  'dbus'                       # meson.build:253  dbus-1 (session_bus_services_dir)
+  'gsettings-desktop-schemas'  # meson.build:239  incondicional
+  'libgoa'                     # meson.build:371  goa-1.0 (-D goa=true, obligatorio para google)
+  # libgdata (meson.build:424) NO va aqui: lo trae el libgdata de este repo, que
+  # local-repo.sh instala con `pacman -U` (ver INSTALL_NOW) antes de llegar
+  # aqui. Con el entran json-glib, libxml2 y gcr, que pkg-config necesita para
+  # resolver el Requires/Requires.private de libgdata.pc.
 )
 options=('!emptydirs')
 source=("https://download.gnome.org/sources/${_pkgbase}/${pkgver%.*}/${_pkgbase}-${pkgver}.tar.xz")
@@ -62,12 +73,21 @@ source=("https://download.gnome.org/sources/${_pkgbase}/${pkgver%.*}/${_pkgbase}
 sha256sums=('a8d7744615a488a559302fe0cc8f418d5b44aba3c2ba2163e5a9e6f607c1be9a')
 
 build() {
-  # Se apaga TODO lo que ya provee el gvfs oficial: el build es mucho mas
-  # rapido y no arrastra samba, libmtp, libimobiledevice, etc.
+  # Se apaga TODO backend que no sea google. De este arbol solo se empaquetan
+  # gvfsd-google y google.mount: cada backend encendido son minutos de
+  # compilacion y una dependencia mas que declarar en makedepends para tirarla
+  # a la basura. Con la lista de abajo los unicos .pc que exige meson son
+  # glib2, gsettings-desktop-schemas, dbus, goa-1.0 y libgdata.
   #
-  # Las opciones usadas aqui estan verificadas contra la documentacion de BLFS
-  # para gvfs 1.60 y el package.yml de Solus. Antes de anadir otras, confirma
-  # que existen en esta version: meson configure build
+  # Apagarlos NO cambia lo que se empaqueta: los HAVE_* que gobiernan (GCR,
+  # GCRYPT, GUDEV, KEYRING, LOGIND, LIBUSB, AVAHI) no aparecen en ninguna
+  # cabecera, solo en .c, y ni gvfsbackendgoogle.c ni daemon-main*.c los usan.
+  # Comprobado: gvfsd-google enlaza solo contra libgvfsdaemon, libgvfscommon,
+  # glib/gio/gobject, libgoa y libgdata (readelf -d sobre el binario del stage).
+  #
+  # Las opciones usadas aqui estan verificadas contra el meson_options.txt de
+  # gvfs 1.60.2 y el package.yml de Solus. Antes de anadir otras, confirma que
+  # existen en esta version: meson configure build
   meson setup "${_pkgbase}-${pkgver}" build \
     --prefix=/usr \
     --libexecdir=/usr/lib \
@@ -90,6 +110,19 @@ build() {
     -D bluray=false \
     -D cdda=false \
     -D fuse=false \
+    -D admin=false \
+    -D afp=false \
+    -D archive=false \
+    -D http=false \
+    -D sftp=false \
+    -D wsdd=false \
+    -D udisks2=false \
+    -D gudev=false \
+    -D keyring=false \
+    -D logind=false \
+    -D libusb=false \
+    -D gcr=false \
+    -D gcrypt=false \
     -D systemduserunitdir=no \
     -D tmpfilesdir=no
 

@@ -65,6 +65,20 @@ makedepends=(
   'meson'
   'ninja'
   'vala'
+  # Los .pc que pide el meson de 2.74.3. Estan tambien en depends, y aun asi
+  # hacen falta AQUI: la instalacion real (scripts/local-repo.sh) construye con
+  # `makepkg -d` y solo instala las makedepends, nunca las depends. Lo que falte
+  # en esta lista no se instala jamas por ese camino.
+  # Ojo con las tres que meson marca 'auto' (brotli, gssapi, sysprof): si faltan
+  # NO paran el build, producen en silencio una libsoup capada que sigue
+  # declarando esas depends.
+  'brotli'                 # meson.build:128  libbrotlidec  (brotli=auto)
+  'krb5'                   # meson.build:327  krb5-config   (gssapi=auto)
+  'libpsl'                 # meson.build:151
+  'libsysprof-capture'     # meson.build:159  sysprof-capture-4 (sysprof=auto)
+  'libxml2'                # meson.build:109
+  'sqlite'                 # meson.build:95   sqlite3
+  'zlib'                   # meson.build:195; sin el cae al subproject y --wrap-mode=nodownload lo prohibe
 )
 provides=(
   "libsoup=${pkgver}"

@@ -87,6 +87,7 @@ jobs:
         shell: bash
         run: |
           pin() { grep -m1 '^pkgver=' "packages/$1/PKGBUILD" | cut -d= -f2; }
+          rel() { grep -m1 '^pkgrel=' "packages/$1/PKGBUILD" | cut -d= -f2; }
           ok=1
           for spec in "gvfs=$(pin gvfs-google)" "gvfs-goa=$(pin gvfs-google)" "libgoa=$(pin gnome-online-accounts)"; do
             if pacman -Sp "$spec" >/dev/null 2>&1; then
@@ -97,6 +98,22 @@ jobs:
               ok=0
             fi
           done
+          # La otra deriva, la que no es un pin: nuestro gnome-online-accounts
+          # solo sombrea al de [extra] mientras su version sea MAYOR (regla
+          # <pkgrel de Arch>.1 de docs/mantenimiento.md). Si Arch publica un
+          # 3.58.1-2 y nadie sube el nuestro a 2.1, cualquier maquina que se
+          # quede sin el repo local por delante instala el GOA de Arch, sin el
+          # permiso de Drive, y Nautilus empieza a dar "Permiso denegado" sin
+          # decir por que. El bot lo arregla solo en 8 h: si esto sale en rojo
+          # mas tiempo, es que el bot no esta publicando.
+          nuestro="$(pin gnome-online-accounts)-$(rel gnome-online-accounts)"
+          suyo="$(LC_ALL=C pacman -Si extra/gnome-online-accounts | awk -F': *' '/^Version/{print $2; exit}')"
+          if [[ "$(vercmp "$nuestro" "$suyo")" -gt 0 ]]; then
+            echo "ok  gnome-online-accounts $nuestro > extra/$suyo"
+          else
+            echo "::error::[extra] tiene gnome-online-accounts $suyo y el nuestro es $nuestro: ya no lo sombrea. Sube pkgrel a <el de Arch>.1 (docs/mantenimiento.md, regla 4)."
+            ok=0
+          fi
           (( ok ))
 
       # El MISMO script que usan el propietario y el sincronizador. El orden
@@ -107,13 +124,26 @@ jobs:
         run: sudo -u builder env HOME=/home/builder ./scripts/build-all.sh --install
 
       # Las comprobaciones que de verdad dicen si esto sirve (mismo script
-      # que install.sh y el sincronizador).
+      # que install.sh y el sincronizador). Todo como builder, igual que la
+      # construccion: out/ es suyo, y sobre todo porque en una maquina real a
+      # publish-repo.sh lo lanza local-repo.sh con as_user, nunca como root.
+      # Como root se probaba la otra rama de su prueba de consumidor (pacman a
+      # pelo en vez de fakeroot), que es la que no usa ninguna maquina; y
+      # mientras leyo el pkgver con `makepkg --printsrcinfo`, makepkg salia con
+      # E_ROOT=10 antes de mirar que le pedian y pipefail mataba el paso mudo:
+      # el job vivio en rojo permanente sin llegar nunca al namcap de abajo.
+      #
+      # ESTRICTO=1 es el contrato de salida del hook (post-upgrade-check.sh:24):
+      # por defecto devuelve 0 detecte lo que detecte -para no rematar cada
+      # `pacman -Syu` con "command failed to execute correctly"-, y aqui eso lo
+      # dejaba de adorno. Su comprobacion 4 exige llavero, que es por lo que
+      # ci-prepare.sh instala gnome-keyring.
       - name: verificar el resultado
         run: |
-          ./scripts/verify-chain.sh
-          bash pacman-hooks/post-upgrade-check.sh
+          sudo -u builder env HOME=/home/builder ./scripts/verify-chain.sh
+          sudo -u builder env HOME=/home/builder ESTRICTO=1 bash pacman-hooks/post-upgrade-check.sh
           # el repo local que generaria una maquina: lista blanca + pacman lo lee
-          ./scripts/publish-repo.sh --check
+          sudo -u builder env HOME=/home/builder ./scripts/publish-repo.sh --check
 
       - name: namcap sobre los paquetes construidos
         shell: bash
@@ -125,6 +155,82 @@ jobs:
             echo "::endgroup::"
           done
 
+
+  # El CI y la instalacion del usuario tienen que ejercitar EL MISMO camino, y
+  # hasta ahora no lo hacian: el job `chain` construye con build-all.sh
+  # (`makepkg --syncdeps`, que instala depends Y makedepends), mientras que una
+  # maquina real pasa por install.sh -> local-repo.sh, que instala SOLO los
+  # makedepends del .SRCINFO y compila con `makepkg -d` (--nodeps). Por eso el
+  # CI podia estar en verde mientras la instalacion se estrellaba con
+  # ERROR: Dependency "gcr-base-3" not found. Este job recorre ese camino.
+  #
+  # A proposito NO usa ci-prepare.sh: ese script instala meson, ninja, vala,
+  # glib2-devel, gobject-introspection y gcr, que es justo lo que aqui hay que
+  # demostrar que instala local-repo.sh a partir de los makedepends declarados.
+  maquina:
+    name: el camino de una maquina (local-repo.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: git para el checkout
+        run: |
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm git
+
+      - uses: actions/checkout@v7
+
+      - name: usuario duenio del clon, y nada mas
+        run: |
+          # makepkg no corre como root, y local-repo.sh saca el usuario del
+          # `stat -c %U` del clon.
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          # En una maquina real /run/lock lo crea systemd-tmpfiles; en el
+          # contenedor no existe y el flock de local-repo.sh no podria abrirlo.
+          mkdir -p /run/lock
+
+      # Lo barato primero: un nombre mal escrito en makedepends se ve en
+      # segundos, no a los veinte minutos de compilacion.
+      - name: los makedepends que extrae local-repo.sh existen en los repos
+        shell: bash
+        run: |
+          lista="$(./scripts/local-repo.sh --no-pull --dry-run --force | sed -n 's/^\[drive-gekko\] makedepends: //p')"
+          echo "makedepends: ${lista:-(ninguno)}"
+          read -ra deps <<<"$lista"
+          # Mas de uno, no "alguno": base-devel lo pone local-repo.sh a mano
+          # (su linea 48, semilla de fakeroot/debugedit) y sale siempre, asi
+          # que con `-n "$lista"` este paso no podia fallar nunca. Si la lista
+          # se queda SOLO en la semilla es que ningun .SRCINFO se pudo leer, y
+          # entonces esto daria verde para estrellarse en el meson veinte
+          # minutos despues, que es justo lo que viene a evitar.
+          (( ${#deps[@]} > 1 )) || { echo "::error::local-repo.sh no extrajo ningun makedepends de los .SRCINFO"; exit 1; }
+          pacman -Si "${deps[@]}" >/dev/null
+
+      # Y ahora el camino entero, tal cual lo corre el temporizador de una
+      # maquina: makedepends + `makepkg -d` + repo local en out/.
+      - name: local-repo.sh (solo makedepends, makepkg -d)
+        run: ./scripts/local-repo.sh --no-pull --force
+
+      - name: los cuatro paquetes estan en el repo local
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for p in libsoup2 libgdata gvfs-google gnome-online-accounts; do
+            f=(out/"$p"-[0-9]*-*-*.pkg.tar.zst)
+            (( ${#f[@]} )) || { echo "::error::local-repo.sh no dejo ningun $p en out/"; exit 1; }
+            echo "ok  ${f[0]}"
+          done
+
+      # local-repo.sh deja gvfs-google y gnome-online-accounts sin instalar a
+      # proposito: los instala el `pacman -Syu` del usuario, en la misma
+      # transaccion que el gvfs de [extra]. Aqui se da ese ultimo paso para
+      # poder verificar la cadena de verdad, no solo que compile.
+      - name: instalar lo que instalaria el usuario, y verificar
+        run: |
+          pacman -U --noconfirm out/gvfs-google-*.pkg.tar.zst out/gnome-online-accounts-*.pkg.tar.zst
+          ./scripts/verify-chain.sh
 
   optional:
     name: deja-dup (opcional, referencia)

@@ -8,5 +8,17 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/lib/drive-gekko-gnome/local-repo.sh
+# Con Type=oneshot systemd NO pone limite de tiempo (TimeoutStartSec=infinity
+# por defecto, systemd.service(5)). Un makepkg colgado dejaria la unidad en
+# "activating" para siempre y, como OnUnitActiveSec cuenta desde la ultima
+# activacion, el temporizador no volveria a dispararse NUNCA: la cadena se
+# quedaria congelada sin que nada lo dijera. Los cuatro builds completos caben
+# de sobra en 2 h hasta en una VM lenta.
+TimeoutStartSec=2h
+# Un fallo que el script no puede contar el mismo (OOM, SIGKILL, el timeout de
+# arriba) muere sin ejecutar su trap ERR: solo quedaria una linea del journal
+# que nadie lee. Esto avisa en el escritorio con el motivo real de systemd.
+# El '-' es para que este aviso no pueda marcar como fallida una pasada buena.
+ExecStopPost=-/usr/local/lib/drive-gekko-gnome/local-repo.sh --aviso-de-fallo
 Nice=10
 IOSchedulingClass=idle

@@ -76,8 +76,33 @@ makedepends=(
   'meson'
   'ninja'
   'vala'
+  # Lo que pide el meson de GOA 3.58.1 con las opciones de build(). Repetido
+  # desde depends a proposito: la instalacion real (scripts/local-repo.sh)
+  # construye con `makepkg -d` y solo instala las makedepends, nunca las
+  # depends. Lo que falte aqui no se instala jamas por ese camino y meson
+  # aborta a mitad, sin el "Missing dependencies" limpio que -d suprime.
+  'dbus'         # meson.build:88   dbus-1
+  'gcr-4'        # meson.build:190  gcr-4        (proveedor kerberos, activo por defecto)
+  'gtk4'         # meson.build:110
+  'json-glib'    # meson.build:95   json-glib-1.0
+  'keyutils'     # meson.build:192  libkeyutils
+  'krb5'         # meson.build:191
+  'libadwaita'   # meson.build:122  libadwaita-1
+  'librest'      # meson.build:99   rest-1.0
+  'libsecret'    # meson.build:96   libsecret-1
+  'libsoup3'     # meson.build:97   libsoup-3.0
+  'libxml2'      # meson.build:98   libxml-2.0
+  # El -D man=true de build() genera goa-daemon.8 con xsltproc, y con --nonet
+  # las hojas docbook tienen que estar en disco: doc/meson.build:75-96.
+  'docbook-xsl'
+  'libxslt'
 )
 optdepends=(
+  # Va primero porque sin el la cadena entera se instala, se verifica y NO
+  # sirve: GOA guarda el token con secret_password_store_sync (goautils.c:309)
+  # y en Arch el unico org.freedesktop.secrets es el de gnome-keyring. Nada lo
+  # arrastra como dependencia dura, ni siquiera gnome-session.
+  'gnome-keyring: proveedor de org.freedesktop.secrets; SIN ESTO no se puede anadir la cuenta de Google (GOA no puede guardar el token)'
   'gvfs-google: montar Google Drive en Nautilus (el motivo de este paquete)'
   'gvfs-goa: sistemas de ficheros virtuales, p.ej. OwnCloud'
   'gvfs-onedrive: Microsoft OneDrive'
@@ -114,8 +139,24 @@ package() {
   # grep -a lee el binario directamente: no depende de binutils. El patron
   # exige 'drive' seguido de espacio o fin de linea para no dar por bueno un
   # scope parcial (drive.file, drive.readonly).
-  if ! find usr/lib -name 'libgoa-backend-1.0.so*' -type f \
-       -exec grep -aqE 'googleapis\.com/auth/drive( |$)' {} +; then
+  # Ojo con `find -exec ... +`: si el -name no encuentra NADA, grep no llega a
+  # ejecutarse y find sale con 0, o sea que el guardian daria por bueno un
+  # paquete sin libgoa-backend. Por eso primero se captura el fichero y se
+  # comprueba que existe, como ya hace scripts/verify-chain.sh:32-36.
+  # `-print -quit` en vez de `| head -1`: para en el primer fichero regular
+  # (los otros dos son enlaces del soname) y sin tuberia no hay SIGPIPE que
+  # pueda envenenar el estado de salida bajo pipefail.
+  # El `|| true` no traga nada: makepkg corre package() con errexit, y sin el
+  # un usr/lib inexistente aborta EN la asignacion y el mensaje de abajo no
+  # llega a imprimirse nunca. Quien decide sigue siendo el [[ -z ]] de abajo.
+  local _lib
+  _lib="$(find usr/lib -name 'libgoa-backend-1.0.so*' -type f -print -quit || true)"
+  if [[ -z "$_lib" ]]; then
+    echo "ERROR: el build no genero ninguna libgoa-backend-1.0.so en usr/lib." >&2
+    echo "       sin ella este paquete no aporta nada: revisa la opcion goabackend" >&2
+    return 1
+  fi
+  if ! grep -aqE 'googleapis\.com/auth/drive( |$)' "$_lib"; then
     echo "ERROR: goa-daemon no pide el scope de Drive." >&2
     echo "       revisa si la opcion google_files sigue existiendo en GOA ${pkgver}" >&2
     return 1

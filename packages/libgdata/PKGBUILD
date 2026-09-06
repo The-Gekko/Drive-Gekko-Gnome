@@ -42,10 +42,23 @@ depends=(
   'libxml2'
 )
 makedepends=(
+  'glib2-devel'      # gdata/meson.build:100 y :108 (glib-genmarshal, glib-mkenums)
   'gobject-introspection'
   'meson'
   'ninja'
   'vala'
+  # Lo que pide meson.build para compilar. Repetido desde depends a proposito:
+  # la instalacion real (scripts/local-repo.sh) construye con `makepkg -d` y
+  # solo instala las makedepends, asi que lo que falte aqui aborta el build.
+  # `gcr` es el que mas duele: en un GNOME montado a mano lo unico que lo
+  # arrastra es gnome-keyring, y sin el meson para en "gcr-base-3 not found".
+  'gcr'              # meson.build:119  gcr-base-3  (opcion gnome, 'enabled' por defecto)
+  'json-glib'        # meson.build:82   json-glib-1.0
+  'libgoa'           # meson.build:129  goa-1.0     (opcion goa, 'enabled' por defecto)
+  'libxml2'          # meson.build:83   libxml-2.0
+  # libsoup-2.4 (meson.build:103) NO va aqui: lo trae el libsoup2 de este repo,
+  # que local-repo.sh instala con `pacman -U` (ver INSTALL_NOW) antes de llegar
+  # aqui; ese paquete no existe en [extra] y pacman no sabria de donde sacarlo.
 )
 # gtk3 solo compila la demo 'scrapbook' (que no se instala) y gtk-doc solo la
 # documentacion: ambas se apagan abajo en vez de arrastrarlas como makedepends.

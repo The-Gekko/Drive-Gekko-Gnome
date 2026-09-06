@@ -8,8 +8,23 @@ set -euo pipefail
 
 # El keyring de la imagen puede llevar semanas: se refresca antes de nada.
 pacman -Sy --noconfirm archlinux-keyring
-pacman -Syu --noconfirm git github-cli pacman-contrib sudo namcap fakeroot \
-  meson ninja vala glib2-devel gobject-introspection
+# base-devel y gcr van nombrados aunque hoy lleguen solos (la imagen trae el
+# primero, y --syncdeps arrastraria el segundo al construir libgdata): son
+# EXACTAMENTE los dos que le faltaban a la maquina del usuario. base-devel
+# aporta fakeroot y debugedit, sin los cuales makepkg aborta en check_software
+# antes de compilar; gcr aporta gcr-base-3, que el meson de libgdata exige y
+# que en una instalacion GNOME hecha a mano no lo arrastra nadie salvo
+# gnome-keyring. Nombrarlos es lo que hace que este contenedor se parezca a
+# una maquina real en vez de depender de que la imagen siga tapando el agujero.
+#
+# gnome-keyring no construye nada: es el proveedor de org.freedesktop.secrets
+# contra el que GOA guarda el token, al que en Arch no arrastra nadie (ni
+# gnome-session). Es la unica cosa que la comprobacion 4 de
+# post-upgrade-check.sh echaria de menos en un contenedor con la cadena entera
+# y perfecta, y sin ella el ESTRICTO=1 de build.yml pondria el job en rojo por
+# algo que no es un fallo de la cadena.
+pacman -Syu --noconfirm base-devel git github-cli pacman-contrib sudo namcap fakeroot \
+  meson ninja vala glib2-devel gobject-introspection gcr gnome-keyring
 
 # makepkg se niega a correr como root.
 if ! id builder >/dev/null 2>&1; then

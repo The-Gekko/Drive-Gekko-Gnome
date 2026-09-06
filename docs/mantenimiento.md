@@ -114,16 +114,34 @@ Tres redes, de la más inmediata a la más tardía:
 
 1. **Hook de pacman** — `/etc/pacman.d/hooks/99-drive-gekko-gnome.hook`, que
    ejecuta `/usr/local/lib/drive-gekko-gnome/post-upgrade-check.sh`. Salta al
-   terminar cualquier transacción sobre `gnome-online-accounts` o `gvfs`.
-   Escribe en la terminal **y lanza una notificación de escritorio**, porque la
-   salida de un hook se pierde entre las 200 líneas de un `-Syu` grande.
+   terminar cualquier transacción sobre `gnome-online-accounts`, `gvfs`,
+   `gvfs-google` o `gnome-keyring`. Escribe en la terminal **y lanza una
+   notificación de escritorio**, porque la salida de un hook se pierde entre las
+   200 líneas de un `-Syu` grande. `install.sh` lo instala en el último paso, no
+   en el primero: armado antes, un `pacman -S` cualquiera lo dispararía sobre
+   una instalación que aún no ha terminado.
 2. **Servicio de inicio de sesión** — `drive-gekko-check.service` (unidad de
    usuario). Repite la comprobación en cada arranque, por si la actualización
    ocurrió desde una TTY o con el escritorio caído.
 3. **A mano** — `./scripts/check-updates.sh`, cuando quieras.
 
-El hook y el servicio de login ejecutan `post-upgrade-check.sh`; `check-updates.sh`
-hace la misma comprobación del scope por su cuenta. La comprobación de fondo es:
+El hook y el servicio de login ejecutan `post-upgrade-check.sh`, que mira, por
+este orden: que el repositorio local siga en `pacman.conf` delante de `[extra]`;
+que su `Server` apunte a un sitio donde de verdad esté la `.db`; el scope de
+Drive; el pin de `gvfs`; que `gvfsd-google` enlace; y que haya un proveedor de
+`org.freedesktop.secrets`.
+
+**Contrato de salida:** termina siempre con **0**, encuentre lo que encuentre.
+Un hook que devuelve error solo consigue que pacman remate cada transacción con
+*«command failed to execute correctly»*, que no explica nada; el aviso ya sale
+por la terminal y por notificación. Con `ESTRICTO=1` en el entorno sí devuelve 1
+cuando algo está roto, y así lo llama `build.yml` para usarlo como comprobación
+de verdad. Si algún día quieres que el CI lo trate como fatal en más sitios,
+recuerda que su comprobación del llavero exige `gnome-keyring` en el contenedor
+(lo instala `scripts/ci-prepare.sh`).
+
+`check-updates.sh` hace la misma comprobación del scope por su cuenta. La
+comprobación de fondo es:
 
 ```bash
 strings /usr/lib/libgoa-backend-1.0.so | grep googleapis.com/auth/drive
@@ -229,15 +247,31 @@ sudo pacman -Syu                      # instala lo que haya nuevo
 ```
 
 Solo generar la `.db` a partir de lo que ya hay en `out/` y comprobarla (lista
-blanca de 4, pacman la lee, y la versión de cada uno coincide con su PKGBUILD):
+blanca de 4, pacman la lee, la versión de cada uno coincide con su PKGBUILD, y
+el `DownloadUser` con el que pacman descarga puede llegar hasta la `.db`):
 
 ```bash
 ./scripts/publish-repo.sh --check
 ```
 
 El bloque de `/etc/pacman.conf` lo escribe `sudo scripts/add-repo.sh --local
-<repo>/out` (antes de `[core]`, y lo recoloca si estaba mal). No se firma: el
-repositorio lo lee root desde un directorio de tu propia máquina.
+<repo>/out` (antes de `[core]`, y lo recoloca si estaba mal). No se firma:
+`SigLevel = Optional TrustAll`, porque el repositorio sale de un directorio de
+tu propia máquina.
+
+Lo que sí hay que conceder son **permisos**: pacman no lee los repositorios como
+root, sino como el usuario de `DownloadUser` (de fábrica `alpm`), también con
+los `file://`. Con el HOME en el `0700` de fábrica ese usuario no puede ni
+atravesarlo, y entonces falla toda la sincronización de la máquina, no solo la
+de este repo. `add-repo.sh` lo comprueba ejecutando como ese usuario
+(`runuser -u alpm -- test -r <out>/drive-gekko-gnome.db`) y, si no llega, le da
+lo mínimo con ACL: `u:alpm:--x` en cada directorio del camino y `u:alpm:r-X`
+sobre `out/`. Si no lo consigue **no escribe el bloque** y sale con 1. Para
+verlo:
+
+```bash
+getfacl -p ~ out | grep alpm
+```
 
 ## Riesgos conocidos
 
